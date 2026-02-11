@@ -152,24 +152,19 @@ class CompareVCF:
         print(f"Recall: {self.recall:.4f}, Precision: {self.precision:.4f}, F1: {self.F1:.4f}")
         print(f"The genotype accuracy for matched {self.TEtype}: {1 - gtDiff/self.nMatch}")
     
-    # 应该把这个函数放到VCF文件生成里
     def convert_to_ploidy(self):
         # self.nHap
         # self.truth_file
         with open(self.truth_file, 'r') as fin, open("polyhap.vcf", 'w') as fout:
             for line in fin:
                 if line.startswith('##'):
-                    # 直接输出注释行
                     fout.write(line)
                 elif line.startswith('#CHROM'):
-                    # 处理表头
                     fields = line.strip().split('\t')
                     fixed_cols = fields[:9]
                     samples = fields[9:]
-                    # 检查样本数能否被ploidy整除
                     if len(samples) % self.nHap != 0:
                         raise ValueError(f"Error: number of haplotypes ({len(samples)}) is not divisible by ploidy ({self.nHap})")
-                    # 合并样本名
                     merged_samples = []
                     for i in range(0, len(samples), self.nHap):
                         group = samples[i:i+self.nHap]
@@ -177,15 +172,12 @@ class CompareVCF:
                         merged_samples.append(merged_name)
                     fout.write('\t'.join(fixed_cols + merged_samples) + '\n')
                 else:
-                    # 处理数据行
                     fields = line.strip().split('\t')
                     fixed_cols = fields[:9]
                     genotypes = fields[9:]
                     merged_gts = []
                     for i in range(0, len(genotypes), self.nHap):
                         group = genotypes[i:i+self.nHap]
-                        # 只保留GT字段里的数字，假设只有GT且格式简单
-                        # 如果是复杂格式，需要再扩展
                         merged_gt = '|'.join(group)
                         merged_gts.append(merged_gt)
                     fout.write('\t'.join(fixed_cols + merged_gts) + '\n')
