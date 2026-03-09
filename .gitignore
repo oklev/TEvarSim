@@ -1,0 +1,9 @@
+# Test data folder
+testData/*
+!testData/
+!testData/rptmsk.out
+!testData/rptmsk.txt
+!testData/MEI.fa
+!testData/human_TE.fa
+!testData/Homo_sapiens_DFAM.fa
+!testData/chr21_tiny.fa
