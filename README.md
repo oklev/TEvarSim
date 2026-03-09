@@ -13,7 +13,7 @@ Key features:
 
 ## Installation
 
-You can install PPTEs from source using `pip`:
+The version of TEvarSim available through pip is outdated; install it from the github repo instead.
 
 ```bash
 # gfatools and repeatmasker are used for *TEpan*.
@@ -21,31 +21,35 @@ You can install PPTEs from source using `pip`:
 # You may skip installing the software if you do not use the corresponding functionality.
 conda create -n tevarsim -c bioconda gfatools repeatmasker mason pbsim3
 conda activate tevarsim
-pip install TEvarSim
+#git clone TEvarSim
+cd TEvarSim
+pip install .
 ```
 ## Quick start
 Example data can be found in the **testData** directory   
 
-**1. Simulate 10 pTE from known TE insertions and deletions**
+**1. Simulate 6 pTE from known TE insertions and deletions**
 ```bash
 tevarsim TEreal --knownINS MEI.fa --knownDEL rmsk.txt --CHR 21 --nTE 6
 ```
 - `MEI.fa` is known pTE insertion, from paper [Logsdon, G.A. et al. Nature, 2025](https://www.nature.com/articles/s41586-025-09140-6)  
 - `rmsk.txt` is known repeats annotation from UCSC hgTables.
 
-**2. Simulate 10 pTE from known TE deletions and random TE insertions**
+**2. Simulate 6 pTE from known TE deletions and random TE insertions**
 ```bash
 tevarsim TErandom --consensus human_TE.fa --knownDEL rmsk.txt --CHR chr21 --nTE 6
 ```
 - `TEconsensus.fa` is human TE consensus sequences from Dfam
 
-**3. Simulate 10 pTE from pangenome graph**
+**3. Simulate 6 pTE from pangenome graph**
 ```bash
+# Fetch pangenome graph from HPRC
+curl https://human-pangenomics.s3.amazonaws.com/pangenomes/freeze/freeze1/minigraph/hprc-v1.0-minigraph-grch38.gfa.gz > hprc-v1.0-minigraph-grch38.gfa.gz
 tevarsim TEpan --gfa hprc-v1.0-minigraph-grch38.gfa.gz –lib Homo_sapiens_DFAM.fa  --CHR chr21 --nTE 6
 ```
 - `hprc-v1.0-minigraph-grch38.gfa.gz` is downloaded from [HPRC](https://data.humanpangenome.org/alignments)
 
-**4. Simulate 10 genomes with 10 pTE**  
+**4. Simulate 10 genomes with 6 pTE**  
 ```bash
 tevarsim Simulate --ref chr21_tiny.fa --bed TEreal.bed --num 10 --pool MEI.fa
 # if you want to generate sequence vairiations of the same TE between genomes, run below commonds
