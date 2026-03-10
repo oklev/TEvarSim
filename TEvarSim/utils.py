@@ -5,32 +5,45 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 # ---------------- sampling TE insertions with min distance ----------------
-def sample_TEins(start: int, end: int, n: int, TEdistance: int):
+def sample_TEins(regions, deletions, n: int, TEdistance: int):
     """
     sample_TEins: Sample n TE insertion positions between start and end with a minimum distance of TEdistance.
     return: a list of positions
     """
-    region_len = end - start
-    # strict feasibility check
-    min_required = n * TEdistance
-    if min_required >= region_len:
-        raise ValueError(
-            f"TEdistance too large. Please reduce TEdistance or the number of TEs to be simulated.")
+    def update_regions(regions,deletion):
+        new_regions = []
+        region_len = 0
+        for region in regions:
+            if region[0] == deletion[0] and region[1] <= deletion[1] and region[2] >= deletion[2]:
+                if region[1] < deletion[1] - TEdistance:
+                    new_regions.append((region[0],region[1],deletion[1]-max(TEdistance,1)))
+                    region_len += deletion[1]-max(TEdistance,1) - region[1]
+                if region[2] > deletion[2] + TEdistance:
+                    new_regions.append((region[0],deletion[2]+max(TEdistance,1),region[2]))
+                    region_len += region[2] - (deletion[2]+max(TEdistance,1))
+            else:
+                new_regions.append(region)
+                region_len += region[2] - region[1]
+        if region_len == 0 and n > 0:
+            raise ValueError("TEdistance too large. Please reduce TEdistance or the number of TEs to be simulated.")
+        return new_regions, region_len
 
-    # compressed sampling
-    max_start = end - min_required
-    base = np.sort(
-        np.random.choice(
-            np.arange(start, max_start),
-            size=n,
-            replace=False
-        )
-    )
+    if deletions:
+        for deletion in deletions:
+            regions, region_len = update_regions(regions,deletion)
+    else:
+        region_len = sum(region[2]-region[1] for region in regions)
 
-    # expand by offsets
-    offsets = np.arange(n) * TEdistance
-    positions = base + offsets
-
+    positions = []
+    while n > 0:
+        n -= 1
+        r = random.randint(0,region_len-1)
+        for region in regions:
+            if r < region[2] - region[1]:
+                positions.append((region[0],region[1]+r))
+                regions, region_len = update_regions(regions,(region[0],region[1]+r,region[1]+r))
+                break
+            r -= region[2] - region[1]
     return positions
 
 # ---------------- adding background SVs ----------------
@@ -121,7 +134,7 @@ def make_min_TE(TE_list: list, nMIN: int, nTE: int, TEtype: set):
     # idct of the TEs
     te = {}
     for i in TE_list:
-        tefamily = i[3]
+        tefamily = i[4]
         if tefamily not in TEtype:
             continue
         if tefamily not in te:
@@ -130,7 +143,7 @@ def make_min_TE(TE_list: list, nMIN: int, nTE: int, TEtype: set):
             te[tefamily].append(i)
     # feasibility check
     if len(te) * nMIN > nTE:
-        raise ValueError(f"Cannot satisfy the minimum number of TEs per family with the total number of TEs to be simulated. Please decrease nMIN.")
+        raise ValueError("Cannot satisfy the minimum number of TEs per family with the total number of TEs to be simulated. Please decrease nMIN.")
     # select minimum TEs
     selected_te = []
     for key in te.keys():

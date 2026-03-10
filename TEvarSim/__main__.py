@@ -15,12 +15,14 @@ def main():
     p1 = subparsers.add_parser("TErandom", 
                                help="Generate pTE position from known deletion sites and random TE insertion")
     # Base
+    p1.add_argument("--ref", "-F", type=str, required=True, 
+                    help="Reference genome FASTA file")
     p1.add_argument("--consensus", "-C", type=str,  required=True,
                     help="Path to the TE consensus FASTA file. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu")
     p1.add_argument("--knownDEL", "-L", type=str, required=True, 
                     help="Input known TE deletion file (RepeatMasker .out or UCSC .txt)")
-    p1.add_argument("--CHR", "-H", type=str, required=True,
-                    help="Chromosome to simulate TE insertions on (e.g., chr21 or 21)")
+    p1.add_argument("--CHR", "-H", type=str,
+                    help="Comma-separated list of chromosome(s) to simulate TE insertions on (e.g., chr21,chr22,chr23). Default: all")
     p1.add_argument("--TEtype", "-e", type=str, action="append",
                     help="Which TE super families to be extracted from the TE deletion file, with the default set as Alu, L1, ERV, and SVA")
     p1.add_argument("--nTE", "-N", type=int, default=100, 
@@ -34,7 +36,7 @@ def main():
     p1.add_argument("--nMIN", type=int, default=0,
                     help="A minimum number of TE deletions for each TE super family to be simulated (default: 0)")
     p1.add_argument("--TEdistance", type=int, default=500,
-                    help="A minimum length of distance between two TE insertions (default: 500 bp)")
+                    help="A minimum length of distance between two TE insertions (default: 500; minimum: 1)")
     p1.add_argument("--nSV", type=int, default=0, help="Number of background structural variants to simulate (default: 0)")
     # SNP and INDEL
     p1.add_argument("--snp-rate", "-S", type=float, default=0.02, 

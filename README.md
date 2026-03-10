@@ -37,7 +37,7 @@ tevarsim TEreal --knownINS MEI.fa --knownDEL rmsk.txt --CHR 21 --nTE 6
 
 **2. Simulate 6 pTE from known TE deletions and random TE insertions**
 ```bash
-tevarsim TErandom --consensus human_TE.fa --knownDEL rmsk.txt --CHR chr21 --nTE 6
+tevarsim TErandom --consensus human_TE.fa --knownDEL rmsk.txt --ref chr21_tiny.fa --nTE 6
 ```
 - `TEconsensus.fa` is human TE consensus sequences from Dfam
 
@@ -87,9 +87,10 @@ Generate pTE position from known deletion sites and random TE insertion.
 **Required arguments:**
 - `consensus` : Path to the TE consensus FASTA file. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu
 - `knownDEL` : Input known TE deletion file (RepeatMasker .out or UCSC .txt)
-- `CHR` : Chromosome to simulate TE insertions on (e.g., chr21 or 21)
+- `ref` : Reference genome FASTA
   
 **Optional arguments:**
+- `CHR` : Chromosome to simulate TE insertions on (e.g., chr21 or 21)
 - `nTE` : Number of polymorphic TE (pTE) insertions to simulate (default: 100)
 - `ins-ratio` : Proportion of insertion events among all simulated pTE (0-1, default: 06)
 - `outprefix` : Output prefix for TE pool FASTA (default: TErandom)

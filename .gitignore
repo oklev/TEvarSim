@@ -7,3 +7,8 @@ testData/*
 !testData/human_TE.fa
 !testData/Homo_sapiens_DFAM.fa
 !testData/chr21_tiny.fa
+!testData/chr21_tiny.fa.fai
+
+# Build
+build
+TEvarSim.egg-info

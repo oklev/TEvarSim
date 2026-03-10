@@ -17,30 +17,42 @@ def check_output_file(output_path):
     if os.path.exists(output_path):
         raise FileExistsError(f"Output file '{output_path}' already exists. Please choose a different name.")
 
-def CHRnorm(chrA,chrB):
-    ### normalize chrA according the style if chrB
-    if chrA.isdigit() and chrB.isdigit():
-         return chrA
-    elif chrA.isdigit() and not chrB.isdigit():
-        if not chrB[3:].isdigit():
-            raise ValueError("Chromosome names must be either plain numbers ('1') or prefixed with 'chr' ('chr1')")
-        else:
-            chrA = chrB[:3] + chrA
-    elif not chrA.isdigit() and chrB.isdigit():
-            chrA = chrA[3:]
-    else:
-        if chrA[:3].upper() != chrB[:3].upper():
-            raise ValueError("Chromosome names must be either plain numbers ('1') or prefixed with 'chr' ('chr1')")
-        else:
-            chrA = chrB[:3] + chrA[3:]
-    return chrA
+def CHRnorm(chr,chr_list):
+    ### normalize chr according the style of chrs in fasta index
+    if chr in chr_list:
+        return chr
+    chr_permutations = {
+        chr.replace("chr",""),
+        chr.replace("chr","CHR"),
+        chr.replace("CHR","chr"),
+        chr.replace("CHR",""),
+        f"chr{chr}",
+        f"CHR{chr}"
+    }
+    existing_chrs = set(iter(chr_list))
+    matches = chr_permutations & existing_chrs
+    if len(matches) == 1:
+        return matches.pop()
+    raise ValueError(f"Chromosome {chr} not found in chromosome list: {','.join(iter(chr_list))}")
 
 class RandomTE:
     def __init__(self, args):
         self.pool_fasta = args.outprefix + ".fa"
         self.out_fasta = args.outprefix + ".bgSV.fa"
         self.DELfile = args.knownDEL
-        self.CHR = args.CHR
+        self.CHR = {}
+        if not os.path.isfile(f"{args.ref}.fai"):
+            raise FileNotFoundError(f"Reference fasta index required: {args.ref}.fai not found.")
+        with open(f"{args.ref}.fai") as fin:
+            for line in fin:
+                line = line.strip().split("\t")
+                if line:
+                    self.CHR[line[0]] = int(line[1])
+        if args.CHR:
+            chosen_chrs = [CHRnorm(chr,self.CHR) for chr in args.CHR.split(",")]
+            self.CHR = {chr:chr_len for chr,chr_len in self.CHR.items() if chr in chosen_chrs}
+        self.regions = [[chr,1,chr_len-2] for chr,chr_len in self.CHR.items()]
+
         self.nTE = args.nTE
         self.ins_ratio = args.ins_ratio
         self.TEtype = args.TEtype
@@ -66,12 +78,10 @@ class RandomTE:
         # 2. parse TEpool
         nINS = int(self.nTE * self.ins_ratio)
         self.parse_TEpool(nINS)
-        # 3. Remove overlapping regions between INS and DEL
-        self.remove_dup_DEL()
-        # 4. Generate BED file
+        # 3. Generate BED file
         self.build_bed()
         logging.info(f"Generated TE BED file: {self.prefix}.bed")
-        # 5. Add background SVs if specified
+        # 4. Add background SVs if specified
         if self.nSV > 0:
             bedin = self.prefix + ".bed"
             bedout = self.prefix + ".bgSV.bed"
@@ -82,7 +92,7 @@ class RandomTE:
         # merge 
         nINS = int(self.nTE * self.ins_ratio)
         nDEL = self.nTE - nINS
-        logging.info(f"Generating {nINS} INS and {nDEL} DEL for chromosome {self.CHR}")
+        logging.info(f"Generating {nINS} INS and {nDEL} DEL for chromosome(s) {','.join(self.CHR.keys())}")
         # print(len(self.INS), len(self.DEL))
         if nINS > len(self.INS) or nDEL > len(self.DEL): 
             raise ValueError(f"generated TE count exceeds total; require INS < {len(self.INS)} and DEL < {len(self.DEL)}")
@@ -101,8 +111,8 @@ class RandomTE:
         bed_name = self.prefix + ".bed"
         check_output_file(bed_name)
         with open(bed_name, "w") as f:
-            for start, end, teID, *_ in merged:
-                f.write("\t".join([self.CHR, str(start), str(end), teID]) + "\n")
+            for chrom, start, end, teID, *_ in merged:
+                f.write("\t".join([chrom, str(start), str(end), teID]) + "\n")
         logging.info(f"Generated BED file: {bed_name}")
 
     def parse_DEL_ucsc(self):
@@ -113,31 +123,24 @@ class RandomTE:
         self.DEL = []
         if not self.TEtype:
             self.TEtype = {'Alu', 'L1', 'SVA'}
-        ## nomalize the chr ID
-        #with open(self.DELfile, "r") as f:
-        #    first_line = f.readline().strip()
-        #    chrom = first_line.split('\t')[5]
-        #    print(f"chromosome from DEL file: {chrom}")
-        #    self.CHR = CHRnorm(self.CHR, chrom)
-        # process file
         with open(self.DELfile) as f:
             for line in f:
                 if line.startswith("#"):
                     continue
                 fields = line.strip().split('\t')
                 chrom = fields[5]
-                # nomalize the chr ID
-                self.CHR = CHRnorm(self.CHR, chrom)
-                # repClass = fields[12][:3]
                 repClass = fields[12]
-                if chrom == self.CHR and repClass in self.TEtype:
-                    start = int(fields[6])
-                    end = int(fields[7])
-                    if end - start > self.DELlen:
-                        teID = f"DEL-{chrom}-{start}-{end}-{fields[12]}-{fields[10]}"
-                        TEfamily = fields[12]
-                        self.DEL.append((start, end, teID, TEfamily, "DEL"))
-                    # self.TEpool[teID] = fasta.fetch(self.CHR, start, end)
+                start = int(fields[6])
+                end = int(fields[7])
+                if end - start < self.DELlen:
+                    continue
+                if repClass in self.TEtype:
+                    for region in self.regions:
+                        if region[0] == chrom and start >= region[1] and end <= region[2]:
+                            teID = f"DEL-{chrom}-{start}-{end}-{fields[12]}-{fields[10]}"
+                            TEfamily = fields[12]
+                            self.DEL.append((chrom, start, end, teID, TEfamily, "DEL"))
+                            continue
 
     def parse_DEL_repeatmasker(self):
         """
@@ -154,50 +157,26 @@ class RandomTE:
                     continue
                 fields = line.strip().split()
                 chrom = fields[4]
-                # nomalize the chr ID
-                self.CHR = CHRnorm(self.CHR, chrom)
                 if "/" not in fields[10]:
                     continue
                 repClass = fields[10].split("/")[1]
-                if chrom == self.CHR and repClass in self.TEtype:
-                    start = int(fields[5])
-                    end = int(fields[6])
-                    if end - start > self.DELlen:
-                        teID = f"DEL-{chrom}-{start}-{end}-{fields[10]}-{fields[9]}"
-                        self.DEL.append((start, end, teID, repClass,"DEL"))
+                start = int(fields[5])
+                end = int(fields[6])
+                if end - start < self.DELlen:
+                    continue
+                if repClass in self.TEtype:
+                    for region in self.regions:
+                        if region[0] == chrom and start >= region[1] and end <= region[2]:
+                            teID = f"DEL-{chrom}-{start}-{end}-{fields[10]}-{fields[9]}"
+                            self.DEL.append((chrom, start, end, teID, repClass,"DEL"))
+                            continue
     
     def parse_TEpool(self, nINS):
         self.INS = []
         records = list(SeqIO.parse(self.pool_fasta, "fasta"))
-        # The max insert position is the end of the last DEL
-        # INSpos = np.random.choice(range(self.DEL[-1][1]), size=nINS, replace=False)
-        INSpos = sample_TEins(start=1, end=self.DEL[-1][1], n=nINS, TEdistance=self.TEdistance)
+        INSpos = sample_TEins(self.regions, self.DEL, n=nINS, TEdistance=self.TEdistance)
         for record,pos in zip(records,INSpos):
-            self.INS.append((pos, pos + 1, record.id, record.id.split("/")[1], "INS"))
-
-    def remove_dup_DEL(self):
-        """
-        Remove DELs that overlap with INSs.
-        """
-        i, j = 0, 0
-        rm_idx = []
-
-        while i < len(self.INS) and j < len(self.DEL):
-            a_start, a_end, *_ = self.INS[i]
-            b_start, b_end, *_ = self.DEL[j]
-
-            # If B[j] overlaps with A[i]
-            if a_start < b_end and a_end > b_start:
-                rm_idx.append(j)
-
-            if a_end < b_end:
-                i += 1
-            else:
-                j += 1
-        # remove
-        delete_set = set(rm_idx)
-        self.DEL = [item for i, item in enumerate(self.DEL) if i not in delete_set]
-
+            self.INS.append((pos[0], pos[1], pos[1], record.id, record.id.split("/")[1], "INS"))
 
 class TEPoolBuilder:
     def __init__(self, args):
