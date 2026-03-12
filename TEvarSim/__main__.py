@@ -38,6 +38,10 @@ def main():
     p1.add_argument("--TEdistance", type=int, default=500,
                     help="A minimum length of distance between two TE insertions (default: 500; minimum: 1)")
     p1.add_argument("--nSV", type=int, default=0, help="Number of background structural variants to simulate (default: 0)")
+    p1.add_argument("--regions", type=str, 
+                    help="Bed file with regions to include in the simulation.")
+    p1.add_argument("--exclude", type=str, 
+                    help="Bed file with regions to exclude from the simulation.")
     # SNP and INDEL
     p1.add_argument("--snp-rate", "-S", type=float, default=0.02, 
                     help="SNP mutation rate per base (default: 0.02)")

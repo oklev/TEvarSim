@@ -51,7 +51,42 @@ class RandomTE:
         if args.CHR:
             chosen_chrs = [CHRnorm(chr,self.CHR) for chr in args.CHR.split(",")]
             self.CHR = {chr:chr_len for chr,chr_len in self.CHR.items() if chr in chosen_chrs}
-        self.regions = [[chr,1,chr_len-2] for chr,chr_len in self.CHR.items()]
+        if args.regions:
+            try:
+                with open(args.regions) as fin:
+                    regions = fin.read().strip().split("\n")
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Regions file {args.regions} not found.")
+            self.regions = []
+            for region in regions:
+                region = region.split("\t")
+                if region[0] in self.CHR:
+                    region[1] = int(region[1])
+                    region[2] = int(region[2])
+                    self.regions.append(region)
+        else:
+            self.regions = [[chr,1,chr_len-2] for chr,chr_len in self.CHR.items()]
+        if args.exclude:
+            try:
+                with open(args.exclude) as fin:
+                    excluded_regions = fin.read().strip().split("\n")
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Excluded regions file {args.exclude} not found.")
+            for excluded_region in excluded_regions:
+                excluded_region = excluded_region.split("\t")
+                excluded_region[1] = int(excluded_region[1])
+                excluded_region[2] = int(excluded_region[2])
+                new_regions = []
+                for region in self.regions:
+                    if region[0] == excluded_region[0]:
+                        if excluded_region[1] < region[2] and excluded_region[2] > region[1]:
+                            if region[1] < excluded_region[1]:
+                                new_regions.append((region[0],region[1],excluded_region[1]))
+                            if region[2] > excluded_region[2]:
+                                new_regions.append((region[0],excluded_region[2],region[2]))
+                            continue
+                    new_regions.append(region)
+                self.regions = new_regions
 
         self.nTE = args.nTE
         self.ins_ratio = args.ins_ratio

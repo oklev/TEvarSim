@@ -34,6 +34,8 @@ tevarsim TEreal --knownINS MEI.fa --knownDEL rptmsk.out --CHR 21 --nTE 6
 ```
 - `MEI.fa` is known pTE insertion, from paper [Logsdon, G.A. et al. Nature, 2025](https://www.nature.com/articles/s41586-025-09140-6)  
 - `rptmsk.out` is the repeatmasker output for chr21_tiny.fa.
+- You can try adding `--CHR chr21,chr22` to restrict the analysis to just two 'chromosomes.'
+- You can try adding `--regions regions.bed` or `--exclude regions.bed` to test out the functionality to restrict the simulation to certain regions or exclude them from the simulation.
 
 **2. Simulate 6 pTE from known TE deletions and random TE insertions**
 ```bash
@@ -99,6 +101,8 @@ Generate pTE position from known deletion sites and random TE insertion.
 - `nMIN` : A minimum number of TE deletions for each TE super family to be simulated (default: 0)
 - `TEdistance` : A minimum length of distance between two TE insertions (default: 500 bp)
 - `nSV` : Number of background structural variants to simulate (default: 0)
+- `regions` : Bed file with regions to include in the simulation.
+- `exclude` : Bed file with regions to exclude from the simulation.
 - `snp-rate` : SNP mutation rate per base (default: 0.02)
 - `indel-rate` : INDEL mutation rate per base (default: 0.005)
 - `indel-ins` : Proportion of indels that are insertions (default: 0.4)
