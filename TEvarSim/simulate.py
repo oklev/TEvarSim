@@ -68,7 +68,6 @@ class Simulator:
         self.random_seed = args.seed
 
         self.TEevents = []
-        #self.genotypes = ""
         if self.random_seed is not None:
             np.random.seed(self.random_seed)
     
@@ -82,23 +81,35 @@ class Simulator:
 
     def _check_bed(self):
         ref_record = next(SeqIO.parse(self.reference, "fasta"))
-        self.ref_id = ref_record.id
-        self.ref_len = len(ref_record.seq)
-        self.CHR = ref_record.id
-        self.ref_seq = str(ref_record.seq)
+        self.CHR = {}
+        for ref_record in SeqIO.parse(self.reference, "fasta"):
+            self.CHR[ref_record.id] = {
+                "len":len(ref_record.seq),
+                "seq":str(ref_record.seq),
+                "events":[],
+                "chunks":[],
+                "cols_to_replace":[],
+                "flipped":[],
+                "col_index":0,
+                "start":0
+            }
         prev_start = -1
         prev_end = -1
         for event in self.TEevents:
+            chrom = event["chrom"]
             start = event["start"]
             end = event["end"]
-            if start >= end:
+            if start > end:
                 raise ValueError(f"Invalid TE event: start >= end. Position: {start}")
-            if start < 0 or end > len(self.ref_seq):
-                raise ValueError(f"TE event out of genome bounds. Position: {start}")
+            if chrom not in self.CHR:
+                raise ValueError(f"Contig not found in reference: {chrom}")
+            if start < 0 or end > self.CHR[chrom]["len"]:
+                raise ValueError(f"TE event out of genome bounds. Position: {chrom}\t{start}\t{end}")
             if start < prev_start:
                 raise ValueError(f"bed file not be sorted by start position. Position: {start}")
             if start < prev_end:
                 raise ValueError(f"Overlapping TE events detected. Position: {start}")
+            self.CHR[chrom]["events"].append(event)
 
     def _parse_bed(self):
         """
@@ -108,12 +119,13 @@ class Simulator:
             for line in f:
                 if line.startswith("#") or not line.strip():
                     continue
-                _, start, end, te_id = line.strip().split("\t")
+                chrom, start, end, te_id, *__ = line.strip().split("\t")
                 te_id = "DEL" if te_id == "-" else te_id # If TE deletion has no ID, assign "DEL"
                 start = int(start)
                 end = int(end)
-                event_type = "INS" if end == start + 1 else "DEL"
+                event_type = "INS" if end-start <= 1 else "DEL"
                 self.TEevents.append({
+                    "chrom":chrom,
                     "start": start,
                     "end": end,
                     "te_id": te_id,
@@ -129,20 +141,24 @@ class Simulator:
         # 1. allele frequency
         if self.af_min > self.af_max:
             raise ValueError(
-        f"Parameter error: af_min must be less than or equal to af_max.")
-        nTE = len(self.TEevents)
-        afs = np.random.uniform(self.af_min, self.af_max, size=nTE)
+        "Parameter error: af_min must be less than or equal to af_max.")
+
+        nTE_total = 0
+        afs_10 = []
 
         # 2. sample genotypes
-        self.genotypes = np.zeros((nTE, self.num_genomes), dtype=int)
-        for i, af in enumerate(afs):
-            self.genotypes[i] = np.random.binomial(1, af, size=self.num_genomes)
+        for chrom in self.CHR:
+            nTE = len(self.CHR[chrom]["events"])
+            nTE_total += nTE
+            afs = np.random.uniform(self.af_min, self.af_max, size=nTE)
+            self.CHR[chrom]["genotypes"] = np.zeros((nTE, self.num_genomes), dtype=int)
+            for i, af in enumerate(afs):
+                self.CHR[chrom]["genotypes"][i] = np.random.binomial(1, af, size=self.num_genomes)
+                if len(afs_10) < 10:
+                    afs_10.append(str(round(af,4)))
 
-        print(f"[INFO] Generated genotypes for {nTE} events across {self.num_genomes} genomes.")
-        print(f"[INFO] Allele frequencies (first 10): {afs[:10]}")
-        # print(f"[INFO] Example genotypes (first 5 events):\n{self.genotypes[:5]}")
-
-        return self.genotypes    
+        print(f"[INFO] Generated genotypes for {nTE_total} events across {self.num_genomes} genomes.")
+        print(f"[INFO] Allele frequencies (first 10): {' '.join(afs_10)}")
 
     def get_TE_tag(self):
         """
@@ -155,24 +171,24 @@ class Simulator:
         # TE pool
         te_pool = {rec.id: rec.seq for rec in SeqIO.parse(self.pool_fasta, "fasta")}
         for event in self.TEevents:
-            start, end, te_id = event["start"], event["end"], event["te_id"]
+            chrom, start, end, te_id = event["chrom"], event["start"], event["end"], event["te_id"]
             # strand
             strand = "+" if np.random.rand() < self.sense_strand_ratio else "-"
             # tsd length
             tsd_len = np.random.randint(self.tsd_min, self.tsd_max + 1)
             if event["type"] == "INS":
                 # bed file is 0-based
-                ref_allele = self.ref_seq[start - 1]
+                ref_allele = self.CHR[chrom]["seq"][start - 1]
                 te_seq = te_pool[te_id]
                 if strand == "-":
                     te_seq = str(te_seq.reverse_complement())
                 # tsd_seq = ref_seq[start-tsd_len : start]
-                tsd_seq = self.ref_seq[start-tsd_len+1 : start+1]
-                alt_allele = self.ref_seq[start - 1] + str(te_seq) + tsd_seq
+                tsd_seq = self.CHR[chrom]["seq"][start-tsd_len+1 : start+1]
+                alt_allele = self.CHR[chrom]["seq"][start - 1] + str(te_seq) + tsd_seq
             else:
                 # REF sequence
-                ref_allele = self.ref_seq[start-1:end]
-                alt_allele = self.ref_seq[start-1]
+                ref_allele = self.CHR[chrom]["seq"][start-1:end]
+                alt_allele = self.CHR[chrom]["seq"][start-1]
             # update TE tags
             event.update({
                 "strand": strand,
@@ -213,7 +229,8 @@ class Simulator:
         with open(vcf_path, "w") as vcf:
             # VCF Header
             vcf.write("##fileformat=VCFv4.2\n")
-            vcf.write(f"##contig=<ID={self.ref_id},length={self.ref_len}>\n")
+            for chr in self.CHR:
+                vcf.write(f"##contig=<ID={chr},length={self.CHR[chr]['len']}>\n")
             vcf.write('##INFO=<ID=TYPE,Number=1,Type=String,Description="Variant type (INS or DEL)">\n')
             vcf.write('##INFO=<ID=STRAND,Number=1,Type=String,Description="Insertion strand (+ or -)">\n')
             vcf.write('##INFO=<ID=TSD,Number=1,Type=Integer,Description="Target site duplication length">\n')
@@ -224,39 +241,39 @@ class Simulator:
             vcf.write('##INFO=<ID=truncate,Number=1,Type=Integer,Description="Number of truncated bases at 5\' end of TE sequence">\n')
             vcf.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')
             samples = [f"Hap{i+1}" for i in range(self.num_genomes)]
-            vcf.write(f"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(samples) + "\n")
+            vcf.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(samples) + "\n")
 
-            for idx, event in enumerate(self.TEevents):
-                chrom = self.CHR
-                # Although BED files are 0-based and VCF files are 1-based, 
-                # VCF files require retrieving one base upstream, so the overall position remains unchanged.
-                pos = event["start"]
-                var_id = event["te_id"]
-                ref = event["ref"]
-                alt = str(event["alt"])
-                event_type = event["type"]
-                strand = event["strand"]
-                tsd = event["tsd_len"]
+            for chrom,chr_info in self.CHR.items():
+                for idx, event in enumerate(chr_info["events"]):
+                    # Although BED files are 0-based and VCF files are 1-based, 
+                    # VCF files require retrieving one base upstream, so the overall position remains unchanged.
+                    pos = event["start"]
+                    var_id = event["te_id"]
+                    ref = event["ref"]
+                    alt = str(event["alt"])
+                    event_type = event["type"]
+                    strand = event["strand"]
+                    tsd = event["tsd_len"]
 
-                # parse TEID: TE family + modified information
-                te_family, mods = self._parse_te_modification(var_id)
+                    # parse TEID: TE family + modified information
+                    te_family, mods = self._parse_te_modification(var_id)
 
-                # INFO
-                info_parts = [
-                    f"TYPE={event_type}",
-                    f"STRAND={strand}",
-                    f"TSD={tsd}",
-                    f"TEFAMILY={te_family}"
-                ]
-                if event_type == "INS":  # only insert needs to be changed
-                    for key in ["SNP", "INDEL", "polyA", "truncate"]:
-                        val = mods.get("n" + key)
-                        if val is not None:
-                            info_parts.append(f"{key}={val}")
+                    # INFO
+                    info_parts = [
+                        f"TYPE={event_type}",
+                        f"STRAND={strand}",
+                        f"TSD={tsd}",
+                        f"TEFAMILY={te_family}"
+                    ]
+                    if event_type == "INS":  # only insert needs to be changed
+                        for key in ["SNP", "INDEL", "polyA", "truncate"]:
+                            val = mods.get("n" + key)
+                            if val is not None:
+                                info_parts.append(f"{key}={val}")
 
-                info_str = ";".join(info_parts)
-                genotypes = list(map(str, self.genotypes[idx]))
-                vcf.write(f"{chrom}\t{pos}\t{var_id}\t{ref}\t{alt}\t.\tPASS\t{info_str}\tGT\t" + "\t".join(genotypes) + "\n")
+                    info_str = ";".join(info_parts)
+                    genotypes = list(map(str, chr_info["genotypes"][idx]))
+                    vcf.write(f"{chrom}\t{pos}\t{var_id}\t{ref}\t{alt}\t.\tPASS\t{info_str}\tGT\t" + "\t".join(genotypes) + "\n")
 
         print(f"[INFO] VCF file written to {vcf_path}")
 
@@ -265,69 +282,73 @@ class Simulator:
         """
         Generate the genome sequence for each sample based on the genotype matrix and variant information.
         """
-        # TE sequences
-        ref_seq = str(next(SeqIO.parse(self.reference, "fasta")).seq)
-
         # split genome
-        chunks = []
-        cols_to_replace = []
-        flipped = []
-        col_index = 0
-        start = 0
-        for event in self.TEevents:
-            SVtype = event['type']
-            left = event['start']
-            right = event['end']
-            if left != start:
+        for chrom,chr_info in self.CHR.items():
+            if not chr_info["events"]:
+                continue
+            for event in chr_info["events"]:
+                # events MUST be sorted
+                SVtype = event['type']
+                left = event['start']
+                right = event['end']
+                if left != chr_info["start"]:
+                    if SVtype == "INS":
+                        chr_info["chunks"].append(
+                            chr_info["seq"][chr_info["start"]:left+1]
+                        )
+                    else:
+                        chr_info["chunks"].append(
+                            chr_info["seq"][chr_info["start"]:left+1]
+                        )
+                    chr_info["col_index"] += 1
                 if SVtype == "INS":
-                    chunks.append(ref_seq[start:left+1])
+                    chr_info["chunks"].append(event["alt"][1:])
                 else:
-                    chunks.append(ref_seq[start:left])
-                col_index += 1
-            if SVtype == "INS":
-                chunks.append(event["alt"][1:])
-            else:
-                chunks.append(event["ref"][1:])
-                flipped.append(col_index)
-            cols_to_replace.append(col_index)
-            col_index += 1
-            start = right    
+                    chr_info["chunks"].append(event["ref"][1:])
+                    chr_info["flipped"].append(chr_info["col_index"])
+                chr_info["cols_to_replace"].append(chr_info["col_index"])
+                chr_info["col_index"] += 1
+                chr_info["start"] = right    
 
-        # Check if the last TE occurs at the end of the genome
-        genome_len = len(ref_seq)
-        if right != genome_len:
-            chunks.append(ref_seq[right:genome_len])
+            # Check if the last TE occurs at the end of the genome
+            genome_len = chr_info["len"]
+            if right != genome_len:
+                chr_info["chunks"].append(chr_info["seq"][right:genome_len])
 
         # combine genome
         if self.diverse:
             print("introduce sequence diversity for each TE-events")
 
         with open(f"{self.output_prefix}.fa", "w") as fo:
-            indexMat = np.ones((len(chunks), self.num_genomes))
-            indexMat[cols_to_replace,:] = self.genotypes
-            for idx in range(self.num_genomes):
-                mask = indexMat[:, idx].astype(bool)
-                mask[flipped] = ~mask[flipped]
-                if self.diverse:
-                    # introduce sequence diversity for each TE-events
-                    mask_seq = [m if i in cols_to_replace else 0 for i, m in enumerate(mask)]
-                    if self.diverse_config:
-                        divConfig = Get_config(self.diverse_config)
-                        diverse_chunks = [SeqDiverse(chunk, **divConfig) if use else chunk for chunk, use in zip(chunks, mask_seq)]
+            for chrom,chr_info in self.CHR.items():
+                if not chr_info["events"]:
+                    for idx in range(self.num_genomes):
+                        fo.write(f">{chrom}_{idx}\n")
+                        for i in range(0, chr_info["len"], 60):
+                            fo.write(chr_info["seq"][i:i+60] + "\n")
+                    continue
+                chunks = chr_info["chunks"]
+                cols_to_replace = chr_info["cols_to_replace"]
+                flipped = chr_info["flipped"]
+                indexMat = np.ones((len(chunks), self.num_genomes))
+                indexMat[cols_to_replace,:] = chr_info["genotypes"]
+                for idx in range(self.num_genomes):
+                    mask = indexMat[:, idx].astype(bool)
+                    mask[flipped] = ~mask[flipped]
+                    if self.diverse:
+                        # introduce sequence diversity for each TE-events
+                        mask_seq = [m if i in cols_to_replace else 0 for i, m in enumerate(mask)]
+                        if self.diverse_config:
+                            divConfig = Get_config(self.diverse_config)
+                            diverse_chunks = [SeqDiverse(chunk, **divConfig) if use else chunk for chunk, use in zip(chunks, mask_seq)]
+                        else:
+                            diverse_chunks = [SeqDiverse(chunk) if use else chunk for chunk, use in zip(chunks, mask_seq)]
+                        assembly = ''.join(chunk for chunk, use in zip(diverse_chunks, mask) if use)
                     else:
-                        diverse_chunks = [SeqDiverse(chunk) if use else chunk for chunk, use in zip(chunks, mask_seq)]
-                    assembly = ''.join(chunk for chunk, use in zip(diverse_chunks, mask) if use)
-                else:
-                    assembly = ''.join(chunk for chunk, use in zip(chunks, mask) if use)
-                fo.write(f">{self.ref_id}_{idx}\n")
-                for i in range(0, len(assembly), 60):
-                    fo.write(assembly[i:i+60] + "\n") 
-
-        """
-        for k, v in locals().items():
-            if k != 'self':
-                setattr(self, k, v)          
-        """
+                        assembly = ''.join(chunk for chunk, use in zip(chunks, mask) if use)
+                    fo.write(f">{chrom}_{idx}\n")
+                    for i in range(0, len(assembly), 60):
+                        fo.write(assembly[i:i+60] + "\n")
 
 def run(args):
     Simulator(args)._run()
