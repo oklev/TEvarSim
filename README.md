@@ -30,14 +30,14 @@ Example data can be found in the **testData** directory
 
 **1. Simulate 6 pTE from known TE insertions and deletions**
 ```bash
-tevarsim TEreal --knownINS MEI.fa --knownDEL rmsk.txt --CHR 21 --nTE 6
+tevarsim TEreal --knownINS MEI.fa --knownDEL rptmsk.out --CHR 21 --nTE 6
 ```
 - `MEI.fa` is known pTE insertion, from paper [Logsdon, G.A. et al. Nature, 2025](https://www.nature.com/articles/s41586-025-09140-6)  
-- `rmsk.txt` is known repeats annotation from UCSC hgTables.
+- `rptmsk.out` is the repeatmasker output for chr21_tiny.fa.
 
 **2. Simulate 6 pTE from known TE deletions and random TE insertions**
 ```bash
-tevarsim TErandom --consensus human_TE.fa --knownDEL rmsk.txt --ref chr21_tiny.fa --nTE 6
+tevarsim TErandom --consensus human_TE.fa --knownDEL rptmsk.out --ref chr21_tiny.fa --nTE 6 --CHR chr21,chr22
 ```
 - `TEconsensus.fa` is human TE consensus sequences from Dfam
 
