@@ -34,14 +34,14 @@ tevarsim TEreal --knownINS MEI.fa --knownDEL rptmsk.out --CHR 21 --nTE 6
 ```
 - `MEI.fa` is known pTE insertion, from paper [Logsdon, G.A. et al. Nature, 2025](https://www.nature.com/articles/s41586-025-09140-6)  
 - `rptmsk.out` is the repeatmasker output for chr21_tiny.fa.
-- You can try adding `--CHR chr21,chr22` to restrict the analysis to just two 'chromosomes.'
-- You can try adding `--regions regions.bed` or `--exclude regions.bed` to test out the functionality to restrict the simulation to certain regions or exclude them from the simulation.
 
 **2. Simulate 6 pTE from known TE deletions and random TE insertions**
 ```bash
 tevarsim TErandom --consensus human_TE.fa --knownDEL rptmsk.out --ref chr21_tiny.fa --nTE 6 --CHR chr21,chr22
 ```
 - `TEconsensus.fa` is human TE consensus sequences from Dfam
+- You can try adding `--CHR chr21,chr22` to restrict the analysis to just two 'chromosomes.'
+- You can try adding `--regions regions.bed` or `--exclude regions.bed` to test out the functionality to restrict the simulation to certain regions or exclude them from the simulation.
 
 **3. Simulate 6 pTE from pangenome graph**
 ```bash
