@@ -2,6 +2,7 @@ import re
 import numpy as np
 from Bio import SeqIO
 from Bio.Seq import Seq
+from contextlib import ExitStack
 
 def SeqDiverse(seq: str,
                snp_rate: float = 0.02,
@@ -319,13 +320,15 @@ class Simulator:
         if self.diverse:
             print("introduce sequence diversity for each TE-events")
 
-        with open(f"{self.output_prefix}.fa", "w") as fo:
+
+        with ExitStack() as stack:
+            files = [stack.enter_context(open(f"{self.output_prefix}_{i}.fa","w")) for i in range(self.num_genomes)]
             for chrom,chr_info in self.CHR.items():
                 if not chr_info["events"]:
                     for idx in range(self.num_genomes):
-                        fo.write(f">{chrom}_{idx}\n")
+                        files[idx].write(f">{chrom}_{idx}\n")
                         for i in range(0, chr_info["len"], 60):
-                            fo.write(chr_info["seq"][i:i+60] + "\n")
+                            files[idx].write(chr_info["seq"][i:i+60] + "\n")
                     continue
                 chunks = chr_info["chunks"]
                 cols_to_replace = chr_info["cols_to_replace"]
@@ -346,9 +349,9 @@ class Simulator:
                         assembly = ''.join(chunk for chunk, use in zip(diverse_chunks, mask) if use)
                     else:
                         assembly = ''.join(chunk for chunk, use in zip(chunks, mask) if use)
-                    fo.write(f">{chrom}_{idx}\n")
+                    files[idx].write(f">{chrom}_{idx}\n")
                     for i in range(0, len(assembly), 60):
-                        fo.write(assembly[i:i+60] + "\n")
+                        files[idx].write(assembly[i:i+60] + "\n")
 
 def run(args):
     Simulator(args)._run()
