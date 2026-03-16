@@ -47,7 +47,7 @@ tevarsim TErandom --consensus human_TE.fa --knownDEL rptmsk.out --ref chr21_tiny
 ```bash
 # Fetch pangenome graph from HPRC
 curl https://human-pangenomics.s3.amazonaws.com/pangenomes/freeze/freeze1/minigraph/hprc-v1.0-minigraph-grch38.gfa.gz > hprc-v1.0-minigraph-grch38.gfa.gz
-tevarsim TEpan --gfa hprc-v1.0-minigraph-grch38.gfa.gz –lib Homo_sapiens_DFAM.fa  --CHR chr21 --nTE 6
+tevarsim TEpan --gfa hprc-v1.0-minigraph-grch38.gfa.gz --lib Homo_sapiens_DFAM.fa  --CHR chr21 --nTE 6
 ```
 - `hprc-v1.0-minigraph-grch38.gfa.gz` is downloaded from [HPRC](https://data.humanpangenome.org/alignments)
 
