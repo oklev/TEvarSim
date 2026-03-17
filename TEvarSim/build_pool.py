@@ -180,7 +180,7 @@ class RandomTE:
                     continue
                 if repClass in self.TEtype:
                     for region in self.regions:
-                        if region[0] == chrom and start >= region[1] and end <= region[2]:
+                        if region[0] == chrom and region[5] == strand and start >= region[1] and end <= region[2]:
                             teID = f"DEL-{chrom}-{start}-{end}-{fields[12]}-{fields[10]}"
                             TEfamily = fields[12]
                             self.DEL.append((chrom, start, end, teID, TEfamily, "DEL", strand))
@@ -211,7 +211,7 @@ class RandomTE:
                     continue
                 if repClass in self.TEtype:
                     for region in self.regions:
-                        if region[0] == chrom and start >= region[1] and end <= region[2]:
+                        if region[0] == chrom and region[5] == strand and start >= region[1] and end <= region[2]:
                             teID = f"DEL-{chrom}-{start}-{end}-{fields[10]}-{fields[9]}"
                             self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
                             continue
