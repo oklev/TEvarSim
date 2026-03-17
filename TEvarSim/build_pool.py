@@ -85,12 +85,12 @@ class RandomTE:
                 excluded_region[2] = int(excluded_region[2])
                 new_regions = []
                 for region in self.regions:
-                    if region[0] == excluded_region[0]:
+                    if region[0] == excluded_region[0] and len(excluded_region) < 6 or region[5] == excluded_region[5]:
                         if excluded_region[1] < region[2] and excluded_region[2] > region[1]:
                             if region[1] < excluded_region[1]:
-                                new_regions.append((region[0],region[1],excluded_region[1]))
+                                new_regions.append((region[0],region[1],excluded_region[1],".",".",region[5]))
                             if region[2] > excluded_region[2]:
-                                new_regions.append((region[0],excluded_region[2],region[2]))
+                                new_regions.append((region[0],excluded_region[2],region[2],".",".",region[5]))
                             continue
                     new_regions.append(region)
                 self.regions = new_regions
