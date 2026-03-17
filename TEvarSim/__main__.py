@@ -1,8 +1,49 @@
 # __main__.py
 import argparse
 import sys
+import os
 from . import build_pool, TE_real, simulate, compare_vcf, reads, TEpan
 from . import __version__
+
+class positive_int(int):
+    def __new__(self, value):
+        self = super().__new__(self, value)
+        if self < 0:
+            raise ValueError(f"Must be a positive integer: {value}")
+
+class ratio(float):
+    def __new__(self, value):
+        self = super().__new__(self, value)
+        if not 0 <= self <= 1:
+            raise ValueError(f"Rate or ratio must be between 0 and 1: {value}")
+        return self
+
+class File_Path(str):
+    def __new__(self, value: str):
+        return super().__new__(self, os.path.abspath(value))
+    def __bool__(self):
+        try:
+            return os.path.isfile(self) and os.stat(self).st_size != 0
+        except (AttributeError, OSError, ValueError, TypeError):
+            return False
+class Existing_File_Path(File_Path):
+    def __new__(self, value: str):
+        path = super().__new__(self,value)
+        if not path:
+            raise ValueError(f"{value} is not an existing file path")
+        return path
+class Fasta_File_Path(Existing_File_Path):
+    def __new__(self, value: str):
+        path = super().__new__(self,value)
+        check = False
+        with open(path) as fin:
+            for line in fin.readlines():
+                if line[0] == ">":
+                    check = True
+                    break
+        if check is False:
+            raise ValueError(f"{value} is not in fasta format")
+        return path
 
 def main():
     parser = argparse.ArgumentParser(prog="tevarsim", 
@@ -15,11 +56,11 @@ def main():
     p1 = subparsers.add_parser("TErandom", 
                                help="Generate pTE position from known deletion sites and random TE insertion")
     # Base
-    p1.add_argument("--ref", "-F", type=str, required=True, 
+    p1.add_argument("--ref", "-F", type=Fasta_File_Path, required=True, 
                     help="Reference genome FASTA file")
-    p1.add_argument("--consensus", "-C", type=str,  required=True,
+    p1.add_argument("--consensus", "-C", type=Fasta_File_Path,  required=True,
                     help="Path to the TE consensus FASTA file. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu")
-    p1.add_argument("--knownDEL", "-L", type=str, required=True, 
+    p1.add_argument("--knownDEL", "-L", type=Existing_File_Path, required=True, 
                     help="Input known TE deletion file (RepeatMasker .out or UCSC .txt)")
     p1.add_argument("--CHR", "-H", type=str,
                     help="Comma-separated list of chromosome(s) to simulate TE insertions on (e.g., chr21,chr22,chr23). Default: all")
@@ -27,39 +68,39 @@ def main():
                     help="Which TE super families to be extracted from the TE deletion file, with the default set as Alu, L1, ERV, and SVA")
     p1.add_argument("--nTE", "-N", type=int, default=100, 
                     help="Number of polymorphic TE (pTE) insertions to simulate (default: 100)")
-    p1.add_argument("--ins-ratio", "-R", type=float, default=0.6, 
+    p1.add_argument("--ins-ratio", "-R", type=ratio, default=0.6, 
                     help="Proportion of insertion events among all simulated pTE (0-1, default: 0.6)")
-    p1.add_argument("--outprefix", "-O", type=str, default="TErandom", 
+    p1.add_argument("--outprefix", "-O", type=File_Path, default="TErandom", 
                     help="Output prefix for the generated TE pool FASTA file and the bed file (default: TErandom)")
     p1.add_argument("--DELlen", type=int, default=100,
                     help="A minimum length of known TE deletions to be considered for simulating pTE deletions (default: 100 bp)")
     p1.add_argument("--nMIN", type=int, default=0,
                     help="A minimum number of TE deletions for each TE super family to be simulated (default: 0)")
-    p1.add_argument("--TEdistance", type=int, default=500,
-                    help="A minimum length of distance between two TE insertions (default: 500; minimum: 1)")
+    p1.add_argument("--TEdistance", type=positive_int, default=500,
+                    help="A minimum length of distance between two TE insertions (default: 500)")
     p1.add_argument("--nSV", type=int, default=0, help="Number of background structural variants to simulate (default: 0)")
-    p1.add_argument("--regions", type=str, 
+    p1.add_argument("--regions", type=Existing_File_Path, 
                     help="Bed file with regions to include in the simulation.")
-    p1.add_argument("--exclude", type=str, 
+    p1.add_argument("--exclude", type=Existing_File_Path, 
                     help="Bed file with regions to exclude from the simulation.")
     p1.add_argument("--sense-strand-ratio", type=ratio, default=None, 
                     help="Proportion of TE variants in the sense strand (default: no strand preference)")
     # SNP and INDEL
-    p1.add_argument("--snp-rate", "-S", type=float, default=0.02, 
+    p1.add_argument("--snp-rate", "-S", type=ratio, default=0.02, 
                     help="SNP mutation rate per base (default: 0.02)")
-    p1.add_argument("--indel-rate", "-I", type=float, default=0.005, 
+    p1.add_argument("--indel-rate", "-I", type=ratio, default=0.005, 
                     help="Indel mutation rate per base (default: 0.005)")
-    p1.add_argument("--indel-ins", "-r", type=float, default=0.4, 
+    p1.add_argument("--indel-ins", "-r", type=ratio, default=0.4, 
                     help="Proportion of insertion events among INDELs (0-1, default: 0.4)")
-    p1.add_argument("--indel-geom-p", "-G", type=float, default=0.7, 
+    p1.add_argument("--indel-geom-p", "-G", type=ratio, default=0.7, 
                     help="Parameter 'p' of geometric distribution for indel lengths (default: 0.7)")
     # Truncation
-    p1.add_argument("--truncated-ratio", "-T", type=float, default=0.3, 
+    p1.add_argument("--truncated-ratio", "-T", type=ratio, default=0.3, 
                     help="Proportion of TE sequences to truncate (0-1, default: 0.3)")
-    p1.add_argument("--truncated-max-length", "-K", type=float, default=0.5, 
+    p1.add_argument("--truncated-max-length", "-K", type=ratio, default=0.5, 
                     help="Maximum proportion of sequence length to truncate (0-1, default: 0.5)")
     # PolyA
-    p1.add_argument("--polyA-ratio", "-A", type=float, default=0.8, 
+    p1.add_argument("--polyA-ratio", "-A", type=ratio, default=0.8, 
                     help="Proportion of TE sequences to add polyA tail (0-1, default: 0.8)")
     p1.add_argument("--polyA-min", "-M", type=int, default=5, 
                     help="Minimum polyA tail length (default: 5)")
@@ -74,9 +115,9 @@ def main():
     p2 = subparsers.add_parser("TEreal", 
                                help="Generate pTE position from Known TE insertion and deletion")
     # Input
-    p2.add_argument("--knownINS", "-K", type=str, required=True, 
+    p2.add_argument("--knownINS", "-K", type=Existing_File_Path, required=True, 
                     help="Input known TE insertion file (e.g., MEI_Callset)")
-    p2.add_argument("--knownDEL", "-L", type=str, required=True, 
+    p2.add_argument("--knownDEL", "-L", type=Existing_File_Path, required=True, 
                     help="Input known TE deletion file (RepeatMasker .out or UCSC .txt)")
     p2.add_argument("--TEtype", "-e", type=str, action="append",
                     help="TEs to be extracted from the TE deletion file, with the default set as LINE, SINE, LTR, and Helitron.")
@@ -88,11 +129,11 @@ def main():
                     help="A minimum number of TE deletions for each TE super family to be simulated (default: 0)")
     p2.add_argument("--nSV", type=int, default=0, help="Number of background structural variants to simulate (default: 0)")
     # Output
-    p2.add_argument("--outprefix", "-O", type=str, default="TEreal", 
+    p2.add_argument("--outprefix", "-O", type=File_Path, default="TEreal", 
                     help="Output prefix for generated BED file (default: 'TEreal')")
     p2.add_argument("--nTE", "-N", type=int,
                     help="Number of polymorphic TE (pTE) insertions to simulate (default: all TEs)")
-    p2.add_argument("--ins-ratio", "-R", type=float, default=0.4, 
+    p2.add_argument("--ins-ratio", "-R", type=ratio, default=0.4, 
                     help="Proportion of insertion events among all simulated pTE (0-1, default: 0.4)")
     # Other
     p2.add_argument("--seed", "-D", type=int, default=None, 
@@ -103,9 +144,9 @@ def main():
     p3 = subparsers.add_parser("TEpan", 
                                help="Generate pTE position from Pangenome graph")
     # Input
-    p3.add_argument("--gfa", "-G", type=str, required=True, 
+    p3.add_argument("--gfa", "-G", type=Existing_File_Path, required=True, 
                     help="GFA file of the pangenome graph")
-    p3.add_argument("--lib", "-L", type=str, required=True, 
+    p3.add_argument("--lib", "-L", type=Existing_File_Path, required=True, 
                     help="RepeatMasker library file")
     p3.add_argument("--CHR", "-H", type=str, required=True, 
                     help="Chromosome to simulate TE insertions on (e.g., chr21 or 21)")
@@ -113,16 +154,16 @@ def main():
                     help="Minimum length of structural variants to consider (default: 250)")
     p3.add_argument("--TEtype", "-e", type=str, action="append",
                     help="TEs to be extracted from the RepeatMasker annotation file, with the default set as LINE, SINE, LTR, and Helitron.")
-    p3.add_argument("--cov", "-C", type=float, default= 0.5,
+    p3.add_argument("--cov", "-C", type=ratio, default= 0.5,
                     help="Minimum TE coverage to consider a structural variant as TE (0-1, default: 0.5)")
     p3.add_argument("--tmpDir", "-T", type=str, default="tmp_TEpan", 
                     help="Temporary directory for intermediate files (default: tmp_TEpan)")
     p3.add_argument("--nTE", "-N", type=int, 
                     help="Number of polymorphic TE (pTE) insertions to simulate (default: all TEs)")
-    p3.add_argument("--ins-ratio", "-R", type=float, default=0.4, 
+    p3.add_argument("--ins-ratio", "-R", type=ratio, default=0.4, 
                     help="Proportion of insertion events among all simulated pTE (0-1, default: 0.4)")
     # Output
-    p3.add_argument("--outprefix", "-O", type=str, default="TEpan", 
+    p3.add_argument("--outprefix", "-O", type=File_Path, default="TEpan", 
                     help="Prefix for output files (VCF + modified genome FASTA)")
     p3.add_argument("--seed", "-D", type=int, default=None, 
                     help="Random seed for reproducibility (default: None)")
@@ -133,31 +174,31 @@ def main():
     p4 = subparsers.add_parser("Simulate", 
                                help="Simulate TE insertions/deletions and generate VCF and modified genome FASTA")
     # Input
-    p4.add_argument("--ref", "-F", type=str, required=True, 
+    p4.add_argument("--ref", "-F", type=Fasta_File_Path, required=True, 
                     help="Reference genome FASTA file")
-    p4.add_argument("--pool", "-P", type=str, required=True, 
+    p4.add_argument("--pool", "-P", type=Fasta_File_Path, required=True, 
                     help="FASTA file of TE sequences generated from 'TEpool'")
-    p4.add_argument("--bed", "-B", type=str, required=True, 
+    p4.add_argument("--bed", "-B", type=Existing_File_Path, required=True, 
                     help="BED file containing TE positions (can be generated by 'TEreal')")
     # Output
-    p4.add_argument("--outprefix", "-O", type=str, default="Sim", 
+    p4.add_argument("--outprefix", "-O", type=File_Path, default="Sim", 
                     help="Prefix for output files (VCF + modified genome FASTA)")
     # Options
     p4.add_argument("--num", "-N", type=int, required=True, 
                     help="Number of genomes to simulate")
     p4.add_argument("--diverse", "-I", action="store_true",
                     help="Introduce sequence diversity among individuals for the same TE event")
-    p4.add_argument("--diverse_config", "-c", type=str,
+    p4.add_argument("--diverse_config", "-c", type=Existing_File_Path,
                     help="Path to a configuration file for introducing sequence diversity among individuals for the same TE event")
-    p4.add_argument("--af-min", "-A", type=float, default=0.1, 
+    p4.add_argument("--af-min", "-A", type=ratio, default=0.1, 
                     help="Minimum allele frequency for simulated TE variants (default: 0.1)")
-    p4.add_argument("--af-max", "-X", type=float, default=0.9, 
+    p4.add_argument("--af-max", "-X", type=ratio, default=0.9, 
                     help="Maximum allele frequency for simulated TE variants (default: 0.9)")
     p4.add_argument("--tsd-min", "-M", type=int, default=5, 
                     help="Minimum TSD length (default: 5)")
     p4.add_argument("--tsd-max", "-Y", type=int, default=20, 
                     help="Maximum TSD length (default: 20)")
-    p4.add_argument("--sense-strand-ratio", "-S", type=float, default=0.5, 
+    p4.add_argument("--sense-strand-ratio", "-S", type=ratio, default=0.5, 
                     help="Proportion of TE variants in the sense strand (default: 0.5)")
     # Other
     p4.add_argument("--seed", "-D", type=int, default=None, 
@@ -198,7 +239,7 @@ def main():
     #p6.add_argument("--outprefix", "-O", type=str, required=True, 
     #                help="prefix of output files")    
     # long reads settings
-    p6.add_argument("--Lerror", "-E", type=float, default= 0.15, 
+    p6.add_argument("--Lerror", "-E", type=ratio, default= 0.15, 
                     help="sequencing error rate for long reads (default: 0.15)")
     p6.add_argument("--Lmean", "-M", type=int,  default= 9000,
                     help="average size of read length (only for long reads, default: 9000 bp)")
