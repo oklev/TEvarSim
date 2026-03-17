@@ -1,7 +1,6 @@
 import re
 import numpy as np
 from Bio import SeqIO
-from Bio.Seq import Seq
 from contextlib import ExitStack
 
 def SeqDiverse(seq: str,
@@ -120,7 +119,12 @@ class Simulator:
             for line in f:
                 if line.startswith("#") or not line.strip():
                     continue
-                chrom, start, end, te_id, *__ = line.strip().split("\t")
+                line = line.strip().split("\t")
+                chrom, start, end, te_id, *__ = line
+                if len(line) > 5:
+                    strand=line[5]
+                else:
+                    strand = "+" if np.random.rand() < self.sense_strand_ratio else "-"
                 te_id = "DEL" if te_id == "-" else te_id # If TE deletion has no ID, assign "DEL"
                 start = int(start)
                 end = int(end)
@@ -130,7 +134,8 @@ class Simulator:
                     "start": start,
                     "end": end,
                     "te_id": te_id,
-                    "type": event_type
+                    "type": event_type,
+                    "strand":strand
                 })
         print(f"[INFO] Parsed {len(self.TEevents)} TE events from BED.")
         print(f"[INFO] Example event: {self.TEevents[0] if self.TEevents else 'No events'}")
@@ -172,9 +177,7 @@ class Simulator:
         # TE pool
         te_pool = {rec.id: rec.seq for rec in SeqIO.parse(self.pool_fasta, "fasta")}
         for event in self.TEevents:
-            chrom, start, end, te_id = event["chrom"], event["start"], event["end"], event["te_id"]
-            # strand
-            strand = "+" if np.random.rand() < self.sense_strand_ratio else "-"
+            chrom, start, end, te_id, strand = event["chrom"], event["start"], event["end"], event["te_id"], event["strand"]
             # tsd length
             tsd_len = np.random.randint(self.tsd_min, self.tsd_max + 1)
             if event["type"] == "INS":
@@ -192,7 +195,6 @@ class Simulator:
                 alt_allele = self.CHR[chrom]["seq"][start-1]
             # update TE tags
             event.update({
-                "strand": strand,
                 "tsd_len": tsd_len,
                 "ref": ref_allele,
                 "alt": alt_allele

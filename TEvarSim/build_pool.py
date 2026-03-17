@@ -5,7 +5,7 @@ import os
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from .utils import sample_TEins, bgSV, make_min_TE
+from .utils import sample_TEins, bgSV, make_min_TE, pick_stranded
 
 def is_dna(seq: Seq) -> bool:
     return set(str(seq)) <= set("ATGCN")
@@ -40,6 +40,7 @@ class RandomTE:
         self.pool_fasta = args.outprefix + ".fa"
         self.out_fasta = args.outprefix + ".bgSV.fa"
         self.DELfile = args.knownDEL
+        self.sense_strand_ratio = args.sense_strand_ratio
         self.CHR = {}
         if not os.path.isfile(f"{args.ref}.fai"):
             raise FileNotFoundError(f"Reference fasta index required: {args.ref}.fai not found.")
@@ -63,9 +64,15 @@ class RandomTE:
                 if region[0] in self.CHR:
                     region[1] = int(region[1])
                     region[2] = int(region[2])
-                    self.regions.append(region)
+                    if len(region) > 5:
+                        self.regions.append(region)
+                    else:
+                        self.regions.append(region[:3]+[".",".","+"])
+                        self.regions.append(region[:3]+[".",".","-"])
         else:
-            self.regions = [[chr,1,chr_len-2] for chr,chr_len in self.CHR.items()]
+            self.regions = [[chr, 0, chr_len - 1, ".", ".", strand] 
+                for strand in ["+", "-"] 
+                for chr, chr_len in self.CHR.items()]
         if args.exclude:
             try:
                 with open(args.exclude) as fin:
@@ -101,6 +108,14 @@ class RandomTE:
             np.random.seed(self.random_seed)
             random.seed(self.random_seed)
 
+
+        if args.sense_strand_ratio is not None:
+            n_sense = round(self.nTE*args.sense_strand_ratio)
+            self.target_strands = (["+"] * n_sense) + (["-"] * (self.nTE - n_sense))
+            np.random.shuffle(self.target_strands)
+        else:
+            self.target_strands = [None] * self.nTE
+
     def _run(self):
         # 1. parse DEL file
         _, ext = os.path.splitext(self.DELfile)
@@ -111,8 +126,16 @@ class RandomTE:
         else:
             raise ValueError("DEL file name must end with .txt (UCSC) or .out (RepeatMasker).")
         # 2. parse TEpool
-        nINS = int(self.nTE * self.ins_ratio)
-        self.parse_TEpool(nINS)
+        self.nDEL = min(int(round(self.nTE* (1-self.ins_ratio))),len(self.DEL))
+        logging.info(f"Generating {self.nTE - self.nDEL} INS and {self.nDEL} DEL for chromosome(s) {','.join(self.CHR.keys())}")
+        if self.nMIN >= self.nTE:
+            raise ValueError(f"minumum number of a TE family ({self.nMIN}) should be less than nTE ({self.nTE})")
+        if self.nMIN > 0:
+            self.DEL = make_min_TE(self.DEL, self.nMIN, self.nDEL, self.TEtype, self.target_strands[:self.nDEL])
+        else:
+            self.DEL = pick_stranded(self.DEL, self.nDEL, self.target_strands[:self.nDEL])
+        self.nINS = self.nTE - len(self.DEL)
+        self.parse_TEpool()
         # 3. Generate BED file
         self.build_bed()
         logging.info(f"Generated TE BED file: {self.prefix}.bed")
@@ -124,30 +147,15 @@ class RandomTE:
             logging.info(f"Generated BED file and fasta file with background SVs are: {bedout} and {self.out_fasta}")
 
     def build_bed(self):
-        # merge 
-        nINS = int(self.nTE * self.ins_ratio)
-        nDEL = self.nTE - nINS
-        logging.info(f"Generating {nINS} INS and {nDEL} DEL for chromosome(s) {','.join(self.CHR.keys())}")
-        # print(len(self.INS), len(self.DEL))
-        if nINS > len(self.INS) or nDEL > len(self.DEL): 
-            raise ValueError(f"generated TE count exceeds total; require INS < {len(self.INS)} and DEL < {len(self.DEL)}")
-        # check nMIN
-        if self.nMIN >= self.nTE:
-            raise ValueError(f"minumum number of a TE family ({self.nMIN}) should be less than nTE ({self.nTE})")
-        if self.nMIN > 0:
-            DELlist = make_min_TE(self.DEL, self.nMIN, nDEL, self.TEtype)
-        else:
-            DEL_indices = np.random.choice(np.arange(len(self.DEL)), size=nDEL, replace=False)
-            DELlist = [self.DEL[i] for i in DEL_indices]
         # merge INS and DEL
-        merged = self.INS + DELlist
+        merged = self.INS + self.DEL
         merged.sort()
         # bedfile output
         bed_name = self.prefix + ".bed"
         check_output_file(bed_name)
         with open(bed_name, "w") as f:
-            for chrom, start, end, teID, *_ in merged:
-                f.write("\t".join([chrom, str(start), str(end), teID]) + "\n")
+            for chrom, start, end, teID, __, __, strand, *__ in merged:
+                f.write("\t".join([chrom, str(start), str(end), teID, ".", strand]) + "\n")
         logging.info(f"Generated BED file: {bed_name}")
 
     def parse_DEL_ucsc(self):
@@ -167,6 +175,7 @@ class RandomTE:
                 repClass = fields[12]
                 start = int(fields[6])
                 end = int(fields[7])
+                strand = fields[9]
                 if end - start < self.DELlen:
                     continue
                 if repClass in self.TEtype:
@@ -174,7 +183,7 @@ class RandomTE:
                         if region[0] == chrom and start >= region[1] and end <= region[2]:
                             teID = f"DEL-{chrom}-{start}-{end}-{fields[12]}-{fields[10]}"
                             TEfamily = fields[12]
-                            self.DEL.append((chrom, start, end, teID, TEfamily, "DEL"))
+                            self.DEL.append((chrom, start, end, teID, TEfamily, "DEL", strand))
                             continue
 
     def parse_DEL_repeatmasker(self):
@@ -197,21 +206,22 @@ class RandomTE:
                 repClass = fields[10].split("/")[1]
                 start = int(fields[5])
                 end = int(fields[6])
+                strand = {"+":"+","C":"-"}[fields[8]]
                 if end - start < self.DELlen:
                     continue
                 if repClass in self.TEtype:
                     for region in self.regions:
                         if region[0] == chrom and start >= region[1] and end <= region[2]:
                             teID = f"DEL-{chrom}-{start}-{end}-{fields[10]}-{fields[9]}"
-                            self.DEL.append((chrom, start, end, teID, repClass,"DEL"))
+                            self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
                             continue
     
-    def parse_TEpool(self, nINS):
+    def parse_TEpool(self):
         self.INS = []
         records = list(SeqIO.parse(self.pool_fasta, "fasta"))
-        INSpos = sample_TEins(self.regions, self.DEL, n=nINS, TEdistance=self.TEdistance)
-        for record,pos in zip(records,INSpos):
-            self.INS.append((pos[0], pos[1], pos[1], record.id, record.id.split("/")[1], "INS"))
+        INSpos = sample_TEins(self.regions, self.DEL, self.nINS, TEdistance=self.TEdistance, target_strands=self.target_strands[-self.nINS:])
+        for record, (chrom, pos, strand) in zip(records,INSpos):
+            self.INS.append((chrom, pos, pos, record.id, record.id.split("/")[1], "INS", strand))
 
 class TEPoolBuilder:
     def __init__(self, args):

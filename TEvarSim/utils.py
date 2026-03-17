@@ -5,45 +5,75 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 # ---------------- sampling TE insertions with min distance ----------------
-def sample_TEins(regions, deletions, n: int, TEdistance: int):
-    """
-    sample_TEins: Sample n TE insertion positions between start and end with a minimum distance of TEdistance.
-    return: a list of positions
-    """
-    def update_regions(regions,deletion):
-        new_regions = []
-        region_len = 0
-        for region in regions:
-            if region[0] == deletion[0] and region[1] <= deletion[1] and region[2] >= deletion[2]:
-                if region[1] < deletion[1] - TEdistance:
-                    new_regions.append((region[0],region[1],deletion[1]-max(TEdistance,1)))
-                    region_len += deletion[1]-max(TEdistance,1) - region[1]
-                if region[2] > deletion[2] + TEdistance:
-                    new_regions.append((region[0],deletion[2]+max(TEdistance,1),region[2]))
-                    region_len += region[2] - (deletion[2]+max(TEdistance,1))
-            else:
-                new_regions.append(region)
-                region_len += region[2] - region[1]
-        if region_len == 0 and n > 0:
-            raise ValueError("TEdistance too large. Please reduce TEdistance or the number of TEs to be simulated.")
-        return new_regions, region_len
+def sample_TEins(regions, deletions, n: int, TEdistance: int, target_strands: list[str|None]):
+    current_regions = np.array([[r[0], r[1], r[2], r[5]] for r in regions], dtype=object)
+    
+    def keep_TEdistance(regs, chrom, excl_start, excl_end):
+        if len(regs) == 0:
+            return regs
+        
+        reg_starts = regs[:, 1].astype(int)
+        reg_ends = regs[:, 2].astype(int)
+        
+        mask = (regs[:, 0] != chrom) | (reg_ends <= excl_start) | (reg_starts >= excl_end)
+        keep_regs = regs[mask]
+        overlap_regs = regs[~mask]
+        split_segments = []
+        
+        for r in overlap_regs:
+            r_chrom, r_start, r_end, r_strand = r[0], int(r[1]), int(r[2]), r[3]
+            if r_start < excl_start:
+                split_segments.append([r_chrom, r_start, excl_start, r_strand])
+            if r_end > excl_end:
+                split_segments.append([r_chrom, excl_end, r_end, r_strand])
+        
+        if not split_segments:
+            return keep_regs
+        return np.vstack([keep_regs, np.array(split_segments, dtype=object)])
 
-    if deletions:
-        for deletion in deletions:
-            regions, region_len = update_regions(regions,deletion)
-    else:
-        region_len = sum(region[2]-region[1] for region in regions)
+    # Subtract Deletions
+    for d in (deletions or []):
+        exclusion_start = d[1] - max(TEdistance, 1)
+        exclusion_end = (d[2] + TEdistance) if TEdistance else (d[1] + 1)
+        current_regions = keep_TEdistance(current_regions, d[0], exclusion_start, exclusion_end)
 
+    # Sample n Positions
     positions = []
-    while n > 0:
-        n -= 1
-        r = random.randint(0,region_len-1)
-        for region in regions:
-            if r < region[2] - region[1]:
-                positions.append((region[0],region[1]+r))
-                regions, region_len = update_regions(regions,(region[0],region[1]+r,region[1]+r))
-                break
-            r -= region[2] - region[1]
+    for target_s in target_strands:        
+        # Filter by strand if a target is specified
+        if target_s is not None:
+            eligible_regs = current_regions[current_regions[:, 3] == target_s]
+            if len(eligible_regs) == 0:
+                eligible_regs = current_regions 
+        else:
+            eligible_regs = current_regions
+
+        lengths = (eligible_regs[:, 2].astype(int) - eligible_regs[:, 1].astype(int))
+        total_len = np.sum(lengths)
+
+        if total_len <= 0:
+            raise ValueError("TEdistance too large or genomic space exhausted.")
+
+        # Select region
+        r_val = np.random.randint(0, total_len)
+        cum_lengths = np.cumsum(lengths)
+        idx = np.searchsorted(cum_lengths, r_val, side='right')
+
+        # Calculate coordinates
+        prev_cum = cum_lengths[idx-1] if idx > 0 else 0
+        offset = r_val - prev_cum
+        chosen = eligible_regs[idx]
+        actual_pos = int(chosen[1]) + offset
+        
+        positions.append((chosen[0], actual_pos, chosen[3]))
+
+        # Update regions to enforce TEdistance for the next pos
+        current_regions = keep_TEdistance(
+            current_regions, chosen[0], 
+            actual_pos - TEdistance, 
+            actual_pos + TEdistance
+        )
+
     return positions
 
 # ---------------- adding background SVs ----------------
@@ -130,30 +160,69 @@ def bgSV(bedin:str, bedout:str, nSV:int, ins_ratio:float, fasta_in:str, fasta_ou
             fout.write(f"{te[0]}\t{te[1]}\t{te[2]}\t{te[3]}\n")
 
 # ---------------- select TEs with the restrict of minimum number ----------------
-def make_min_TE(TE_list: list, nMIN: int, nTE: int, TEtype: set):
-    # idct of the TEs
-    te = {}
-    for i in TE_list:
-        tefamily = i[4]
-        if tefamily not in TEtype:
-            continue
-        if tefamily not in te:
-            te[tefamily] = [i]
-        else:
-            te[tefamily].append(i)
-    # feasibility check
-    if len(te) * nMIN > nTE:
-        raise ValueError("Cannot satisfy the minimum number of TEs per family with the total number of TEs to be simulated. Please decrease nMIN.")
-    # select minimum TEs
-    selected_te = []
-    for key in te.keys():
-        col = te[key]
-        if len(col) < nMIN:
-            raise ValueError(f"The TE number of family {key} is less than nMIN ({nMIN}). Please decrease nMIN.")
-        selected_te.extend(random.sample(col, nMIN))
-    if len(selected_te) < nTE:
-        remaining = nTE - len(selected_te)
-        remaining_pool = [i for i in TE_list if i not in selected_te]
-        selected_te.extend(random.sample(remaining_pool, remaining))
-    return selected_te
+def make_min_TE(TE_list: list, nMIN: int, nTE: int, TEtype: set, target_strands: list):
+    # Organize TEs by family
+    te_by_family = {}
+    for entry in TE_list:
+        family = entry[4]
+        if family in TEtype:
+            te_by_family.setdefault(family, []).append(entry)
 
+    # Feasibility Check
+    if len(te_by_family) * nMIN > nTE:
+        raise ValueError(f"nMIN error: nMIN ({nMIN}) * num_families ({len(te_by_family)}) exceeds number of deletions requested ({nTE}).")
+
+    selected_te = []
+    
+    # Satisfy nMIN for each family
+    for family, members in te_by_family.items():
+        if len(members) < nMIN:
+            raise ValueError(f"Family {family} has fewer than {nMIN} members.")
+        
+        # Pick nMIN randomly to start
+        selected_te.extend(random.sample(members, nMIN))
+    
+    nTE -= len(selected_te)
+    if nTE == 0:
+        return selected_te
+    
+    for te in selected_te:
+        try:
+            target_strands.remove(te[6])
+        except ValueError:
+            try:
+                target_strands.remove(None)
+            except ValueError:
+                target_strands.pop()
+
+    return selected_te + pick_stranded(
+        [te for te in TE_list if te not in selected_te],
+        nTE,
+        target_strands
+    )
+
+def pick_stranded(TE_list: list, nTE: int, target_strands: list):
+    selected_te = []
+    n_either = target_strands.count(None)
+    n_sense = target_strands.count("+")
+    n_antisense = nTE - n_either - n_sense
+
+    if n_sense:
+        sense_pool = [x for x in TE_list if x[6] == "+"]
+        if n_sense > len(sense_pool):
+            selected_te += sense_pool
+            n_either += n_sense - len(sense_pool)
+        else:
+            selected_te.extend(random.sample(sense_pool,n_sense))
+    if n_antisense:
+        antisense_pool = [x for x in TE_list if x[6] == "-"]
+        if n_antisense > len(antisense_pool):
+            selected_te += antisense_pool
+            n_either += n_antisense - len(antisense_pool)
+        else:
+            selected_te.extend(random.sample(antisense_pool,n_antisense))
+    if n_sense or n_antisense and n_either:
+        TE_list = [x for x in TE_list if x not in selected_te]
+    selected_te.extend(random.sample(TE_list,n_either))
+
+    return selected_te
