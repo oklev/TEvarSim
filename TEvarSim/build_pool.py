@@ -35,6 +35,17 @@ def CHRnorm(chr,chr_list):
         return matches.pop()
     raise ValueError(f"Chromosome {chr} not found in chromosome list: {','.join(iter(chr_list))}")
 
+class TEtype(list):
+    def __init__(self,te_list):
+        if te_list is None:
+            te_list = []
+        super().__init__(te_list)
+    def __contains__(self, other):
+        if not self:
+            return True
+        else:
+            return super().__contains__(other)
+
 class RandomTE:
     def __init__(self, args):
         self.pool_fasta = args.outprefix + ".fa"
@@ -97,7 +108,7 @@ class RandomTE:
 
         self.nTE = args.nTE
         self.ins_ratio = args.ins_ratio
-        self.TEtype = args.TEtype
+        self.TEtype = TEtype(args.TEtype)
         self.prefix = args.outprefix
         self.DELlen = args.DELlen
         self.TEdistance = args.TEdistance

@@ -65,7 +65,7 @@ def main():
     p1.add_argument("--CHR", "-H", type=str,
                     help="Comma-separated list of chromosome(s) to simulate TE insertions on (e.g., chr21,chr22,chr23). Default: all")
     p1.add_argument("--TEtype", "-e", type=str, action="append",
-                    help="Which TE super families to be extracted from the TE deletion file, with the default set as Alu, L1, ERV, and SVA")
+                    help="Which TE super families to be extracted from the TE deletion file. Default: all")
     p1.add_argument("--nTE", "-N", type=int, default=100, 
                     help="Number of polymorphic TE (pTE) insertions to simulate (default: 100)")
     p1.add_argument("--ins-ratio", "-R", type=ratio, default=0.6, 
