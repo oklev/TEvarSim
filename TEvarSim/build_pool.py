@@ -129,13 +129,7 @@ class RandomTE:
 
     def _run(self):
         # 1. parse DEL file
-        _, ext = os.path.splitext(self.DELfile)
-        if ext.lower() == ".txt":
-            self.parse_DEL_ucsc()
-        elif ext.lower() == ".out":
-            self.parse_DEL_repeatmasker()
-        else:
-            raise ValueError("DEL file name must end with .txt (UCSC) or .out (RepeatMasker).")
+        self.parse_DEL()
         # 2. parse TEpool
         self.nDEL = min(int(round(self.nTE* (1-self.ins_ratio))),len(self.DEL))
         logging.info(f"Generating {self.nTE - self.nDEL} INS and {self.nDEL} DEL for chromosome(s) {','.join(self.CHR.keys())}")
@@ -168,60 +162,106 @@ class RandomTE:
             for chrom, start, end, teID, __, __, strand, *__ in merged:
                 f.write("\t".join([chrom, str(start), str(end), teID, ".", strand]) + "\n")
         logging.info(f"Generated BED file: {bed_name}")
-
-    def parse_DEL_ucsc(self):
-        """
-        Parse UCSC repeat annotation file (.txt) and return a list of parsed records.
-        self.DEL
-        """
+    
+    def parse_DEL(self):
         self.DEL = []
-        if not self.TEtype:
-            self.TEtype = {'Alu', 'L1', 'SVA'}
+        # process file
+        ext = self.DELfile.split(".")[-1]
+        if ext == "out":
+            # Parse RepeatMasker input
+            self.parse_DEL_repeatmasker()
+            return
+        elif ext == "txt":
+            # Parse UCSC input
+            def readline(line):
+                if line.startswith("#"):
+                    return
+                fields = line.strip().split('\t')
+                #       chrom,      repClass    start           end             strand      name        class_fam
+                return  fields[5],  fields[12], int(fields[6]), int(fields[7]), fields[9],  fields[10], fields[12]
+            return
+        elif ext == "bed":
+            # Parse bed input
+            def readline(line):
+                if not line.strip():
+                    return
+                fields = line.strip().split("\t")
+                name, class_fam = fields[3].split("#")
+                #       chrom,      repClass                start           end             strand     name    class_fam
+                return fields[0],   class_fam.split("/"),  int(fields[1]), int(fields[2]), fields[5],  name,   class_fam
+        else:
+            raise ValueError(f"Input file format not recognized for --knownDEL: {ext}")
         with open(self.DELfile) as f:
             for line in f:
-                if line.startswith("#"):
-                    continue
-                fields = line.strip().split('\t')
-                chrom = fields[5]
-                repClass = fields[12]
-                start = int(fields[6])
-                end = int(fields[7])
-                strand = fields[9]
+                try:
+                    chrom, repClass, start, end, strand, name, class_fam = readline(line)
+                except ValueError as e:
+                    if "not enough values to unpack" in str(e):
+                        continue
+                    raise
                 if end - start < self.DELlen:
                     continue
                 if repClass in self.TEtype:
-                    teID = f"DEL-{chrom}-{start}-{end}-{fields[12]}-{fields[10]}"
-                    TEfamily = fields[12]
-                    self.DEL.append((chrom, start, end, teID, TEfamily, "DEL", strand))
-                    continue
-
+                    teID = f"DEL-{chrom}-{start}-{end}-{class_fam}-{name}"
+                    self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
+    
     def parse_DEL_repeatmasker(self):
-        """
-        Parse repeatmasker output file (.out) and return a list of parsed records.
-        self.DEL
-        """
-        self.DEL = []
-        if not self.TEtype:
-            self.TEtype = {'Alu', 'L1', 'SVA'}
-        # process file
+        repeatmasker_records = {}
         with open(self.DELfile) as f:
             for line in f:
                 if not line.strip() or not line.strip()[0].isdigit(): 
                     continue
-                fields = line.strip().split()
-                chrom = fields[4]
-                if "/" not in fields[10]:
-                    continue
-                repClass = fields[10].split("/")[1]
-                start = int(fields[5])
-                end = int(fields[6])
-                strand = {"+":"+","C":"-"}[fields[8]]
-                if end - start < self.DELlen:
-                    continue
-                if repClass in self.TEtype:
-                    teID = f"DEL-{chrom}-{start}-{end}-{fields[10]}-{fields[9]}"
-                    self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
-                    continue
+                line = line.strip().split()
+                if line[8] == "C":
+                    line[8] = "-"
+                for i in (5,6,14):
+                    line[i] = int(line[i])
+                if line[14] not in repeatmasker_records:
+                    repeatmasker_records[line[14]] = []
+                repeatmasker_records[line[14]].append(line)
+        for te_info in repeatmasker_records.values():
+            chrom = te_info[0][4]
+            start = min(record[5] for record in te_info)
+            end = max(record[6] for record in te_info)
+            if end - start < self.DELlen:
+                continue
+            match_name = {}
+            match_class_fam = {}
+            match_strand = {"+":0,"-":0}
+            for record in te_info:
+                if record[9] not in match_name:
+                    match_name[record[9]] = 0
+                if record[10] not in match_class_fam:
+                    match_class_fam[record[10]] = 0
+                record_len = record[6] - record[5]
+                match_name[record[9]] += record_len
+                match_class_fam[record[10]] += record_len
+                match_strand[record[8]] += record_len
+            if match_strand["+"] > match_strand["-"]:
+                strand = "+"
+            else:
+                strand = "-"
+            if len(match_name) == 1:
+                name = next(iter(match_name))
+                class_fam = next(iter(match_class_fam))
+            else:
+                ty_i = {n[:-2]:n_len for n,n_len in match_name.items() if n[-2:] == "-I"}
+                if ty_i:
+                    match_name = ty_i
+                    print(te_info)
+                match_name = dict(sorted(match_name.items(),key=lambda item: item[1]))
+                match_class_fam = dict(sorted(match_class_fam.items(),key=lambda item: item[1]))
+                match_max = next(iter(match_name.values()))
+                matches = [n for n in match_name if match_name[n] >= 0.2*match_max]
+                name = "|".join(matches)
+                if ty_i and te_info[0][9][-4:] == "-LTR" and te_info[-1][9][-4:] == "-LTR":
+                    name += "-FULL"
+                    print(name)
+                class_fam = next(iter(match_class_fam))
+            repClass = class_fam.split("/")[0]
+            if repClass in self.TEtype:
+                teID = f"DEL-{chrom}-{start}-{end}-{class_fam}-{name}"
+                self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
     
     def parse_TEpool(self):
         self.INS = []
@@ -268,12 +308,41 @@ class TEPoolBuilder:
             raise ValueError(f"No sequences found in consensus FASTA: {self.consensus}")
         logging.info(f"Found {len(records)} sequences in consensus FASTA.")
         # check if all sequence are legal
+        parsed_records = []
+        potential_LTRs = {}
         for record in records:
             record.seq = record.seq.upper()
             if not is_dna(record.seq):
                 raise ValueError(f"Invalid characters found in {record.id}")
             if not check_TEid(record.id):
                 raise ValueError(f"Invalid format in TE ID: {record.id}. Please follow the format '>TEname#class/superfamily', e.g., '>AluY#SINE/Alu'")
+            if record.id.split("#")[0][-2:] == "-I" or record.id.split("#")[0][-4:] == "-LTR":
+                id, class_fam = record.id.split("#")
+                ltr_name, ltr_part = id.rsplit("-",1)
+                if ltr_name not in potential_LTRs:
+                    potential_LTRs[ltr_name] = {"class_fam":class_fam}
+                potential_LTRs[ltr_name][ltr_part] = record
+            else:
+                parsed_records.append(record)
+        if potential_LTRs:
+            for ltr_name, ltr_parts in potential_LTRs.items():
+                if "I" in ltr_parts and "LTR" in ltr_parts:
+                    ltr_rec = ltr_parts["LTR"]
+                    internal_rec = ltr_parts["I"]
+                    
+                    new_id = f"{ltr_name}-FULL#{ltr_parts['class_fam']}"
+                    new_record = SeqRecord(
+                        ltr_rec.seq + internal_rec.seq + ltr_rec.seq,
+                        id=new_id,
+                        description=f"Merged LTR-I-LTR sequence for {ltr_name}"
+                    )
+                    
+                    parsed_records.append(new_record)
+                else:
+                    for part_rec in ltr_parts.values():
+                        parsed_records.append(part_rec)
+            records = parsed_records
+                    
 
         # generate random masks for truncation and polyA
         truncated_num = np.random.random(self.nINS)
