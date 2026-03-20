@@ -60,7 +60,7 @@ def main():
                     help="Reference genome FASTA file")
     p1.add_argument("--consensus", "-C", type=Fasta_File_Path,  required=True,
                     help="Path to the TE consensus FASTA file. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu")
-    p1.add_argument("--knownDEL", "-L", type=Existing_File_Path, required=True, 
+    p1.add_argument("--knownDEL", "-L", type=Existing_File_Path, required=False, 
                     help="Input known TE deletion file (RepeatMasker .out or UCSC .txt)")
     p1.add_argument("--CHR", "-H", type=str,
                     help="Comma-separated list of chromosome(s) to simulate TE insertions on (e.g., chr21,chr22,chr23). Default: all")
@@ -264,6 +264,14 @@ def main():
         sys.exit(1)
     
     args = parser.parse_args()
+    if args.command == "TErandom":
+        if not args.knownDEL:
+            if args.ins_ratio < 1:
+                if "--ins-ratio" in sys.argv or "-R" in sys.argv:
+                    p1.error("--knownDEL is required for insertion ratio < 1")
+                else:
+                    print("Warning: setting ins-ratio to 1 because no knownDEL file was provided.",file=sys.stderr)
+                    args.ins_ratio = 1
     if args.command == "simulate":
         if args.diverse_config and not args.diverse:
             parser.error("--diverse_config requires --diverse to be set")

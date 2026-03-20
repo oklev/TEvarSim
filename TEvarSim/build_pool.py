@@ -165,6 +165,8 @@ class RandomTE:
     
     def parse_DEL(self):
         self.DEL = []
+        if not self.DELfile:
+            return
         # process file
         ext = self.DELfile.split(".")[-1]
         if ext == "out":
