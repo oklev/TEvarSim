@@ -2,6 +2,8 @@ import re
 import numpy as np
 from Bio import SeqIO
 from contextlib import ExitStack
+from traceback import format_exc
+import sys
 
 def SeqDiverse(seq: str,
                snp_rate: float = 0.02,
@@ -183,7 +185,11 @@ class Simulator:
             if event["type"] == "INS":
                 # bed file is 0-based
                 ref_allele = self.CHR[chrom]["seq"][start - 1]
-                te_seq = te_pool[te_id]
+                try:
+                    te_seq = te_pool[te_id]
+                except KeyError:
+                    print(format_exc(),file=sys.stderr)
+                    raise ValueError(f"TE sequence {te_seq} not found in {self.pool_fasta}. This could be because the pool file doesn't match the input bed.")
                 if strand == "-":
                     te_seq = str(te_seq.reverse_complement())
                 # tsd_seq = ref_seq[start-tsd_len : start]
