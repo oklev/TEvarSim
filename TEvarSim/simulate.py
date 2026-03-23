@@ -139,8 +139,8 @@ class Simulator:
                     "type": event_type,
                     "strand":strand
                 })
-        print(f"[INFO] Parsed {len(self.TEevents)} TE events from BED.")
-        print(f"[INFO] Example event: {self.TEevents[0] if self.TEevents else 'No events'}")
+        print(f"[INFO] Parsed {len(self.TEevents)} TE events from BED.",file=sys.stderr)
+        print(f"[INFO] Example event: {self.TEevents[0] if self.TEevents else 'No events'}",file=sys.stderr)
     
     def _random_sample_genotypes(self):
         """
@@ -165,8 +165,8 @@ class Simulator:
                 if len(afs_10) < 10:
                     afs_10.append(str(round(af,4)))
 
-        print(f"[INFO] Generated genotypes for {nTE_total} events across {self.num_genomes} genomes.")
-        print(f"[INFO] Allele frequencies (first 10): {' '.join(afs_10)}")
+        print(f"[INFO] Generated genotypes for {nTE_total} events across {self.num_genomes} genomes.",file=sys.stderr)
+        print(f"[INFO] Allele frequencies (first 10): {' '.join(afs_10)}",file=sys.stderr)
 
     def get_TE_tag(self):
         """
@@ -284,7 +284,7 @@ class Simulator:
                     genotypes = list(map(str, chr_info["genotypes"][idx]))
                     vcf.write(f"{chrom}\t{pos}\t{var_id}\t{ref}\t{alt}\t.\tPASS\t{info_str}\tGT\t" + "\t".join(genotypes) + "\n")
 
-        print(f"[INFO] VCF file written to {vcf_path}")
+        print(f"[INFO] VCF file written to {vcf_path}",file=sys.stderr)
 
 
     def generate_genome(self):
@@ -326,7 +326,7 @@ class Simulator:
 
         # combine genome
         if self.diverse:
-            print("introduce sequence diversity for each TE-events")
+            print("introduce sequence diversity for each TE-events",file=sys.stderr)
 
 
         with ExitStack() as stack:

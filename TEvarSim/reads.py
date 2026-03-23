@@ -30,7 +30,7 @@ class Read:
             if self.type == "long":
                 self.simLong(self.genomeF, record.id)
             else:
-                print(f"Simulating short reads for genome: {record.id}")
+                print(f"Simulating short reads for genome: {record.id}",file=sys.stderr)
                 self.simShort(self.genomeF, record.id, record.seq)
         else:
             # multiple genomes
@@ -45,7 +45,7 @@ class Read:
     def simShort(self, genomeFile, seqID, seq):
         genome_length = len(seq)
         depth = int(genome_length * self.depth / (self.length * 2))
-        print(f"Simulating short reads for genome: {seqID}")
+        print(f"Simulating short reads for genome: {seqID}",file=sys.stderr)
         if self.seed:
             strings = (
                 f"mason_simulator -ir {genomeFile} -o {seqID}_R1.fq.gz -or {seqID}_R2.fq.gz "
@@ -61,7 +61,7 @@ class Read:
         subprocess.run(strings, shell=True, check=True)
 
     def simLong(self, genomeFile, seqID):
-        print(f"Simulating long reads for genome: {seqID}")
+        print(f"Simulating long reads for genome: {seqID}",file=sys.stderr)
         if self.seed:
             strings = (
                 f"pbsim --strategy wgs --method qshmm --qshmm {sys.prefix}/data/QSHMM-RSII.model --depth {self.depth} "

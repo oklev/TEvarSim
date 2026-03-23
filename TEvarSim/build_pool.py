@@ -250,7 +250,6 @@ class RandomTE:
                 ty_i = {n[:-2]:n_len for n,n_len in match_name.items() if n[-2:] == "-I"}
                 if ty_i:
                     match_name = ty_i
-                    print(te_info)
                 match_name = dict(sorted(match_name.items(),key=lambda item: item[1]))
                 match_class_fam = dict(sorted(match_class_fam.items(),key=lambda item: item[1]))
                 match_max = next(iter(match_name.values()))
@@ -258,7 +257,6 @@ class RandomTE:
                 name = "|".join(matches)
                 if ty_i and te_info[0][9][-4:] == "-LTR" and te_info[-1][9][-4:] == "-LTR":
                     name += "-FULL"
-                    print(name)
                 class_fam = next(iter(match_class_fam))
             repClass = class_fam.split("/")[0]
             if repClass in self.TEtype:
