@@ -12,3 +12,4 @@ testData/*
 # Build
 build
 TEvarSim.egg-info
+__pycache__
