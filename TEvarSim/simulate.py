@@ -82,7 +82,6 @@ class Simulator:
         self.generate_genome()
 
     def _check_bed(self):
-        ref_record = next(SeqIO.parse(self.reference, "fasta"))
         self.CHR = {}
         for ref_record in SeqIO.parse(self.reference, "fasta"):
             self.CHR[ref_record.id] = {

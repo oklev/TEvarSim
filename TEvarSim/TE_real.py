@@ -29,7 +29,7 @@ class RealTE:
     def __init__(self, args):
         # self.reference = args.reference
         self.INSfile = args.knownINS
-        self.DELfile = args.knownDEL
+        self.DELfile = args.existingTEs
         self.TEtype = args.TEtype
         self.DELlen = args.DELlen
         self.CHR = args.CHR

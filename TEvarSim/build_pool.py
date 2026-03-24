@@ -50,7 +50,7 @@ class RandomTE:
     def __init__(self, args):
         self.pool_fasta = args.outprefix + ".fa"
         self.out_fasta = args.outprefix + ".bgSV.fa"
-        self.DELfile = args.knownDEL
+        self.DELfile = args.existingTEs
         self.sense_strand_ratio = args.sense_strand_ratio
         self.CHR = {}
         if not os.path.isfile(f"{args.ref}.fai"):
@@ -192,7 +192,7 @@ class RandomTE:
                 #       chrom,      repClass                start           end             strand     name    class_fam
                 return fields[0],   class_fam.split("/"),  int(fields[1]), int(fields[2]), fields[5],  name,   class_fam
         else:
-            raise ValueError(f"Input file format not recognized for --knownDEL: {ext}")
+            raise ValueError(f"Input file format not recognized for --existingTEs: {ext}")
         with open(self.DELfile) as f:
             for line in f:
                 try:

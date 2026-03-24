@@ -2,6 +2,8 @@
 import argparse
 import sys
 import os
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*Global interpreter lock.*")
 from . import build_pool, TE_real, simulate, compare_vcf, reads, TEpan
 from . import __version__
 
@@ -60,7 +62,7 @@ def main():
                     help="Reference genome FASTA file")
     p1.add_argument("--consensus", "-C", type=Fasta_File_Path,  required=True,
                     help="Path to the TE consensus FASTA file. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu")
-    p1.add_argument("--knownDEL", "-L", type=Existing_File_Path, required=False, 
+    p1.add_argument("--existingTEs", "-L", type=Existing_File_Path, required=False, 
                     help="Input known TE deletion file (RepeatMasker .out or UCSC .txt)")
     p1.add_argument("--CHR", "-H", type=str,
                     help="Comma-separated list of chromosome(s) to simulate TE insertions on (e.g., chr21,chr22,chr23). Default: all")
@@ -117,7 +119,7 @@ def main():
     # Input
     p2.add_argument("--knownINS", "-K", type=Existing_File_Path, required=True, 
                     help="Input known TE insertion file (e.g., MEI_Callset)")
-    p2.add_argument("--knownDEL", "-L", type=Existing_File_Path, required=True, 
+    p2.add_argument("--existingTEs", "-L", type=Existing_File_Path, required=True, 
                     help="Input known TE deletion file (RepeatMasker .out or UCSC .txt)")
     p2.add_argument("--TEtype", "-e", type=str, action="append",
                     help="TEs to be extracted from the TE deletion file, with the default set as LINE, SINE, LTR, and Helitron.")
@@ -265,12 +267,12 @@ def main():
     
     args = parser.parse_args()
     if args.command == "TErandom":
-        if not args.knownDEL:
+        if not args.existingTEs:
             if args.ins_ratio < 1:
                 if "--ins-ratio" in sys.argv or "-R" in sys.argv:
-                    p1.error("--knownDEL is required for insertion ratio < 1")
+                    p1.error("--existingTEs is required for insertion ratio < 1")
                 else:
-                    print("Warning: setting ins-ratio to 1 because no knownDEL file was provided.",file=sys.stderr)
+                    print("Warning: setting ins-ratio to 1 because no existingTEs file was provided.",file=sys.stderr)
                     args.ins_ratio = 1
     if args.command == "simulate":
         if args.diverse_config and not args.diverse:
