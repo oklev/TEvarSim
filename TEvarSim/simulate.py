@@ -4,6 +4,7 @@ from Bio import SeqIO
 from contextlib import ExitStack
 from traceback import format_exc
 import sys
+import os
 
 def SeqDiverse(seq: str,
                snp_rate: float = 0.02,
@@ -234,6 +235,7 @@ class Simulator:
             - SNP/INDEL/polyA/truncate: modification counts (only for INS)
         """
         vcf_path = f"{self.output_prefix}.vcf"
+        outprefix = os.path.basename(self.output_prefix)
         with open(vcf_path, "w") as vcf:
             # VCF Header
             vcf.write("##fileformat=VCFv4.2\n")
@@ -248,7 +250,7 @@ class Simulator:
             vcf.write('##INFO=<ID=polyA,Number=1,Type=Integer,Description="Length of added polyA tail in TE sequence">\n')
             vcf.write('##INFO=<ID=truncate,Number=1,Type=Integer,Description="Number of truncated bases at 5\' end of TE sequence">\n')
             vcf.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')
-            samples = [f"Hap{i+1}" for i in range(self.num_genomes)]
+            samples = [f"{outprefix}_{i}" for i in range(self.num_genomes)]
             vcf.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + "\t".join(samples) + "\n")
 
             for chrom,chr_info in self.CHR.items():
@@ -300,14 +302,9 @@ class Simulator:
                 left = event['start']
                 right = event['end']
                 if left != chr_info["start"]:
-                    if SVtype == "INS":
-                        chr_info["chunks"].append(
-                            chr_info["seq"][chr_info["start"]:left+1]
-                        )
-                    else:
-                        chr_info["chunks"].append(
-                            chr_info["seq"][chr_info["start"]:left+1]
-                        )
+                    chr_info["chunks"].append(
+                        chr_info["seq"][chr_info["start"]:left]
+                    )
                     chr_info["col_index"] += 1
                 if SVtype == "INS":
                     chr_info["chunks"].append(event["alt"][1:])
