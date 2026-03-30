@@ -28,9 +28,9 @@ def load_truth_vcf(vcf_file, sampleID, INSonly, TEtype):
                 TEfamily = varID.split("/")[1].split("-")[0]
             else:
                 TEfamily = varID.split("/")[1].split("_")[0]
-            if TEfamily == TEtype:
+            if TEtype is None or TEfamily == TEtype:
                 sample = record.samples[sampleID]
-                gt = sample.get('GT')  
+                gt = sample.get('GT')
                 # filt positions withou any variants
                 if any(allele is None for allele in gt) or all(allele == 0 for allele in gt):
                     continue
@@ -49,9 +49,12 @@ def load_vcf(vcf_file, sampleID):
     
     for record in vcf.fetch():    
         sample = record.samples[sampleID]
-        gt = sample.get('GT')  
+        non_var_gts = {0}
+        if "<*>" in record.alts:
+            non_var_gts.add(record.alts.index("<*>")+1)
+        gt = sample.get('GT')
         # filt positions withou any variants
-        if any(allele is None for allele in gt) or all(allele == 0 for allele in gt):
+        if any(allele is None for allele in gt) or all(allele in non_var_gts for allele in gt):
             continue
         if record.chrom in variants:
             variants[record.chrom].append((record.pos, gt))
@@ -135,8 +138,12 @@ class CompareVCF:
         # common chromosomes
         common_chr = pred_chr & bench_chr
         print(f"Common chromosomes: {common_chr}")
-        print(f"Nmber of {self.TEtype} in truth VCF: {sum(len(bench_var[chrom]) for chrom in bench_chr)}")
-        print(f"Number of {self.TEtype} in prediction VCF: {sum(len(pred_var[chrom]) for chrom in pred_chr)}")
+        if self.TEtype is None:
+            tetype = "TEs"
+        else:
+            tetype = self.TEtype
+        print(f"Nmber of {tetype} in truth VCF: {sum(len(bench_var[chrom]) for chrom in bench_chr)}")
+        print(f"Number of {tetype} in prediction VCF: {sum(len(pred_var[chrom]) for chrom in pred_chr)}")
         for chrom in common_chr:
             bench_pos, bench_gt = zip(*bench_var[chrom])
             compare_pos, compare_gt = zip(*pred_var[chrom])
@@ -147,10 +154,10 @@ class CompareVCF:
             gtDiff += gtDiff_tmp
 
         self.F1, self.precision, self.recall = calculate_metrics(tp, fp, fn)
-        print(f"For {self.TEtype} occurrence sites:")
+        print(f"For {tetype} occurrence sites:")
         print(f"True Positive: {tp}, False Positive: {fp}, False negative: {fn}")
         print(f"Recall: {self.recall:.4f}, Precision: {self.precision:.4f}, F1: {self.F1:.4f}")
-        print(f"The genotype accuracy for matched {self.TEtype}: {1 - gtDiff/self.nMatch}")
+        print(f"The genotype accuracy for matched {tetype}: {1 - gtDiff/self.nMatch}")
     
     def convert_to_ploidy(self):
         # self.nHap
