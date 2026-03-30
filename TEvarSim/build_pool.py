@@ -80,6 +80,8 @@ class RandomTE:
                     else:
                         self.regions.append(region[:3]+[".",".","+"])
                         self.regions.append(region[:3]+[".",".","-"])
+            if regions and not self.regions:
+                raise ValueError("Chromosomes in regions file not found in reference.")
         else:
             self.regions = [[chr, 0, chr_len - 1, ".", ".", strand] 
                 for strand in ["+", "-"] 
