@@ -255,6 +255,9 @@ class Simulator:
 
             for chrom,chr_info in self.CHR.items():
                 for idx, event in enumerate(chr_info["events"]):
+                    genotypes = list(map(str, chr_info["genotypes"][idx]))
+                    if all(g=="0" for g in genotypes):
+                        continue
                     # Although BED files are 0-based and VCF files are 1-based, 
                     # VCF files require retrieving one base upstream, so the overall position remains unchanged.
                     pos = event["start"]
@@ -282,7 +285,6 @@ class Simulator:
                                 info_parts.append(f"{key}={val}")
 
                     info_str = ";".join(info_parts)
-                    genotypes = list(map(str, chr_info["genotypes"][idx]))
                     vcf.write(f"{chrom}\t{pos}\t{var_id}\t{ref}\t{alt}\t.\tPASS\t{info_str}\tGT\t" + "\t".join(genotypes) + "\n")
 
         print(f"[INFO] VCF file written to {vcf_path}",file=sys.stderr)
