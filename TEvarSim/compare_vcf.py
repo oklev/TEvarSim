@@ -157,7 +157,10 @@ class CompareVCF:
         print(f"For {tetype} occurrence sites:")
         print(f"True Positive: {tp}, False Positive: {fp}, False negative: {fn}")
         print(f"Recall: {self.recall:.4f}, Precision: {self.precision:.4f}, F1: {self.F1:.4f}")
-        print(f"The genotype accuracy for matched {tetype}: {1 - gtDiff/self.nMatch}")
+        if self.nMatch:
+            print(f"The genotype accuracy for matched {tetype}: {1 - gtDiff/self.nMatch}")
+        else:
+            print(f"The genotype accuracy for matched {tetype}: N/A")
     
     def convert_to_ploidy(self):
         # self.nHap
