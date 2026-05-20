@@ -83,8 +83,10 @@ class RandomTE:
             if regions and not self.regions:
                 raise ValueError("Chromosomes in regions file not found in reference.")
         else:
-            self.regions = [[chr, 0, chr_len - 1, ".", ".", strand] 
-                for strand in ["+", "-"] 
+            # Skip position 0: simulate.py reads seq[start-1], so start=0 wraps to seq[-1].
+            # End is half-open per BED convention.
+            self.regions = [[chr, 1, chr_len, ".", ".", strand]
+                for strand in ["+", "-"]
                 for chr, chr_len in self.CHR.items()]
         if args.exclude:
             try:
@@ -98,7 +100,7 @@ class RandomTE:
                 excluded_region[2] = int(excluded_region[2])
                 new_regions = []
                 for region in self.regions:
-                    if region[0] == excluded_region[0] and len(excluded_region) < 6 or region[5] == excluded_region[5]:
+                    if region[0] == excluded_region[0] and (len(excluded_region) < 6 or region[5] == excluded_region[5]):
                         if excluded_region[1] < region[2] and excluded_region[2] > region[1]:
                             if region[1] < excluded_region[1]:
                                 new_regions.append((region[0],region[1],excluded_region[1],".",".",region[5]))
@@ -133,7 +135,15 @@ class RandomTE:
         # 1. parse DEL file
         self.parse_DEL()
         # 2. parse TEpool
-        self.nDEL = min(int(round(self.nTE* (1-self.ins_ratio))),len(self.DEL))
+        # The pool fasta was sized by round(nTE * ins_ratio) in TEPoolBuilder, so we can't
+        # silently grow nINS to make up for a shortfall in available deletions - we'd run
+        # out of pool records. Require enough DEL up front.
+        self.nDEL = int(round(self.nTE * (1 - self.ins_ratio)))
+        if self.nDEL > len(self.DEL):
+            raise ValueError(
+                f"Requested {self.nDEL} deletions but only {len(self.DEL)} available in --existingTEs "
+                f"after filtering. Lower --nTE, raise --ins-ratio, or relax --TEtype/--DELlen."
+            )
         logging.info(f"Generating {self.nTE - self.nDEL} INS and {self.nDEL} DEL for chromosome(s) {','.join(self.CHR.keys())}")
         if self.nMIN >= self.nTE:
             raise ValueError(f"minumum number of a TE family ({self.nMIN}) should be less than nTE ({self.nTE})")
@@ -183,7 +193,6 @@ class RandomTE:
                 fields = line.strip().split('\t')
                 #       chrom,      repClass    start           end             strand      name        class_fam
                 return  fields[5],  fields[12], int(fields[6]), int(fields[7]), fields[9],  fields[10], fields[12]
-            return
         elif ext == "bed":
             # Parse bed input
             def readline(line):
@@ -191,8 +200,8 @@ class RandomTE:
                     return
                 fields = line.strip().split("\t")
                 name, class_fam = fields[3].split("#")
-                #       chrom,      repClass                start           end             strand     name    class_fam
-                return fields[0],   class_fam.split("/"),  int(fields[1]), int(fields[2]), fields[5],  name,   class_fam
+                #       chrom,      repClass                  start           end             strand     name    class_fam
+                return fields[0],   class_fam.split("/")[0],  int(fields[1]), int(fields[2]), fields[5],  name,   class_fam
         else:
             raise ValueError(f"Input file format not recognized for --existingTEs: {ext}")
         with open(self.DELfile) as f:
@@ -252,8 +261,8 @@ class RandomTE:
                 ty_i = {n[:-2]:n_len for n,n_len in match_name.items() if n[-2:] == "-I"}
                 if ty_i:
                     match_name = ty_i
-                match_name = dict(sorted(match_name.items(),key=lambda item: item[1]))
-                match_class_fam = dict(sorted(match_class_fam.items(),key=lambda item: item[1]))
+                match_name = dict(sorted(match_name.items(),key=lambda item: item[1], reverse=True))
+                match_class_fam = dict(sorted(match_class_fam.items(),key=lambda item: item[1], reverse=True))
                 match_max = next(iter(match_name.values()))
                 matches = [n for n in match_name if match_name[n] >= 0.2*match_max]
                 name = "|".join(matches)
@@ -267,8 +276,12 @@ class RandomTE:
     
     def parse_TEpool(self):
         self.INS = []
+        if self.nINS == 0:
+            return
         records = list(SeqIO.parse(self.pool_fasta, "fasta"))
-        INSpos = sample_TEins(self.regions, self.DEL, self.nINS, TEdistance=self.TEdistance, target_strands=self.target_strands[-self.nINS:])
+        # Guard against lst[-0:] == lst[0:] (whole list); explicitly take the last nINS entries.
+        ins_strands = self.target_strands[-self.nINS:]
+        INSpos = sample_TEins(self.regions, self.DEL, self.nINS, TEdistance=self.TEdistance, target_strands=ins_strands)
         for record, (chrom, pos, strand) in zip(records,INSpos):
             self.INS.append((chrom, pos, pos, record.id, record.id.split("/")[1], "INS", strand))
 

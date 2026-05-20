@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 import random
 from Bio import SeqIO
@@ -31,20 +32,24 @@ def sample_TEins(regions, deletions, n: int, TEdistance: int, target_strands: li
             return keep_regs
         return np.vstack([keep_regs, np.array(split_segments, dtype=object)])
 
-    # Subtract Deletions
+    # Subtract Deletions: exclude the deletion span itself plus a TEdistance buffer on each side.
     for d in (deletions or []):
-        exclusion_start = d[1] - max(TEdistance, 1)
-        exclusion_end = (d[2] + TEdistance) if TEdistance else (d[1] + 1)
+        exclusion_start = d[1] - TEdistance
+        exclusion_end = d[2] + TEdistance
         current_regions = keep_TEdistance(current_regions, d[0], exclusion_start, exclusion_end)
 
     # Sample n Positions
     positions = []
-    for target_s in target_strands:        
+    for target_s in target_strands:
         # Filter by strand if a target is specified
         if target_s is not None:
             eligible_regs = current_regions[current_regions[:, 3] == target_s]
             if len(eligible_regs) == 0:
-                eligible_regs = current_regions 
+                logging.warning(
+                    f"No regions remain on strand '{target_s}' (likely consumed by --TEdistance); "
+                    f"falling back to any-strand placement for this insertion."
+                )
+                eligible_regs = current_regions
         else:
             eligible_regs = current_regions
 
@@ -185,7 +190,11 @@ def make_min_TE(TE_list: list, nMIN: int, nTE: int, TEtype: set, target_strands:
     nTE -= len(selected_te)
     if nTE == 0:
         return selected_te
-    
+
+    # nMIN forces us to pick at least nMIN members per family, regardless of strand. Consume the
+    # matching slot from target_strands if possible, else burn a None slot, else pop arbitrarily.
+    # Best-effort: the requested sense/antisense ratio may be skewed if many forced picks land on
+    # the wrong strand.
     for te in selected_te:
         try:
             target_strands.remove(te[6])
@@ -221,7 +230,7 @@ def pick_stranded(TE_list: list, nTE: int, target_strands: list):
             n_either += n_antisense - len(antisense_pool)
         else:
             selected_te.extend(random.sample(antisense_pool,n_antisense))
-    if n_sense or n_antisense and n_either:
+    if (n_sense or n_antisense) and n_either:
         TE_list = [x for x in TE_list if x not in selected_te]
     selected_te.extend(random.sample(TE_list,n_either))
 
