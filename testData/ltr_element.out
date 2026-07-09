@@ -1,0 +1,7 @@
+   SW   perc perc perc  query     position in query        matching repeat           position in repeat
+score   div. del. ins.  sequence  begin  end      (left)   repeat   class/family   begin  end    (left)  ID
+
+ 2252  4.8 0.0 1.7 chr21 100001 100300 (668180) + Gypsy1-LTR LTR/Gypsy 1 300 (0) 1
+ 3000  5.0 0.0 0.0 chr21 100301 101300 (667180) + Gypsy1-I LTR/Gypsy 1 1000 (0) 1
+ 2252  4.9 0.0 1.5 chr21 101301 101600 (666880) + Gypsy1-LTR LTR/Gypsy 1 300 (0) 1
+ 2713 13.7 0.5 0.2 chr21 200001 200500 (567980) C L1 LINE/L1 6019 100 5581 2

@@ -3,7 +3,7 @@
 **TEvarSim** is a versatile genome simulation tool for generating polymorphic transposable element (TE) variants.   
 
 Key features:
-- Supports both TE insertions and deletions
+- Supports TE insertions, deletions, and LTR-LTR recombinations (excisions of full-length LTR elements into solo LTRs)
 -	Simulates both real and random TE variants
 -	Simulates both short- and long-read sequencing data
 -	Supports population-scale genome simulation
@@ -28,28 +28,43 @@ pip install .
 ## Quick start
 Example data can be found in the **testData** directory   
 
-**1. Simulate 6 pTE from known TE insertions and deletions**
+The number of each event class is specified explicitly with `--nINS` (insertions), `--nDEL`
+(deletions), and `--nEXC` (LTR-LTR recombinations / excisions). Set at least one to a value > 0.
+
+**1. Simulate 4 insertions and 2 deletions from known TEs**
 ```bash
-tevarsim TEreal --knownINS MEI.fa --knownDEL rptmsk.out --CHR 21 --nTE 6
+tevarsim TEreal --knownINS MEI.fa --existingTEs rptmsk.out --CHR 21 --nINS 4 --nDEL 2
 ```
 - `MEI.fa` is known pTE insertion, from paper [Logsdon, G.A. et al. Nature, 2025](https://www.nature.com/articles/s41586-025-09140-6)  
 - `rptmsk.out` is the repeatmasker output for chr21_tiny.fa.
 
-**2. Simulate 6 pTE from known TE deletions and random TE insertions**
+**1b. Add LTR-LTR recombinations (excisions)**
 ```bash
-tevarsim TErandom --consensus human_TE.fa --knownDEL rptmsk.out --ref chr21_tiny.fa --nTE 6 --CHR chr21,chr22
+tevarsim TEreal --knownINS MEI.fa --existingTEs ltr_element.out --CHR 21 \
+    --TEtype Gypsy --nDEL 1 --nEXC 1
+```
+- An excision converts a full-length LTR element (LTR-Internal-LTR) into a solo LTR.
+- Full-length elements are identified from the fragment structure in a RepeatMasker `.out`
+  file, so `--nEXC` requires `.out` input (not UCSC `.txt`). Include the relevant LTR family
+  in `--TEtype`. `testData/ltr_element.out` is a small demonstration fixture.
+
+**2. Simulate deletions plus random TE insertions**
+```bash
+tevarsim TErandom --consensus human_TE.fa --existingTEs rptmsk.out --ref chr21_tiny.fa --nINS 4 --nDEL 2 --CHR chr21,chr22
 ```
 - `TEconsensus.fa` is human TE consensus sequences from Dfam
+- Add `--nEXC N` (with a RepeatMasker `.out` `--existingTEs` file) to also simulate excisions.
 - You can try adding `--CHR chr21,chr22` to restrict the analysis to just two 'chromosomes.'
 - You can try adding `--regions regions.bed` or `--exclude regions.bed` to test out the functionality to restrict the simulation to certain regions or exclude them from the simulation.
 
-**3. Simulate 6 pTE from pangenome graph**
+**3. Simulate pTE from pangenome graph**
 ```bash
 # Fetch pangenome graph from HPRC
 curl https://human-pangenomics.s3.amazonaws.com/pangenomes/freeze/freeze1/minigraph/hprc-v1.0-minigraph-grch38.gfa.gz > hprc-v1.0-minigraph-grch38.gfa.gz
-tevarsim TEpan --gfa hprc-v1.0-minigraph-grch38.gfa.gz --lib Homo_sapiens_DFAM.fa  --CHR chr21 --nTE 6
+tevarsim TEpan --gfa hprc-v1.0-minigraph-grch38.gfa.gz --lib Homo_sapiens_DFAM.fa  --CHR chr21 --nINS 4 --nDEL 2
 ```
 - `hprc-v1.0-minigraph-grch38.gfa.gz` is downloaded from [HPRC](https://data.humanpangenome.org/alignments)
+- LTR-LTR recombination (`--nEXC`) is not yet supported for TEpan.
 
 **4. Simulate 10 genomes with 6 pTE**  
 ```bash
@@ -88,13 +103,14 @@ Generate pTE position from known deletion sites and random TE insertion.
 
 **Required arguments:**
 - `consensus` : Path to the TE consensus FASTA file. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu
-- `knownDEL` : Input known TE deletion file (RepeatMasker .out or UCSC .txt)
 - `ref` : Reference genome FASTA
   
 **Optional arguments:**
+- `existingTEs` : Known TE annotation file (RepeatMasker .out or UCSC .txt); required when `--nDEL` or `--nEXC` > 0
 - `CHR` : Chromosome to simulate TE insertions on (e.g., chr21 or 21)
-- `nTE` : Number of polymorphic TE (pTE) insertions to simulate (default: 100)
-- `ins-ratio` : Proportion of insertion events among all simulated pTE (0-1, default: 06)
+- `nINS` : Number of random TE insertions to simulate (default: 0)
+- `nDEL` : Number of TE deletions to simulate from `--existingTEs` (default: 0)
+- `nEXC` : Number of LTR-LTR recombinations (excisions of full-length LTR elements) to simulate; requires a RepeatMasker `.out` `--existingTEs` file (default: 0)
 - `outprefix` : Output prefix for TE pool FASTA (default: TErandom)
 - `TEtype` : Which TE super families to be extracted from the TE deletion file (default: Alu, L1, and SVA). Specify the TE type by `--TEtype Alu --TEtype L1`
 - `DELlen` : A minimum length of known TE deletions to be considered for simulating pTE deletions (default: 100 bp)
@@ -120,17 +136,18 @@ Automatically generate pTE positions from RepeatMasker or UCSC repeat annotation
 
 **Required arguments:**  
 - `knownINS` : Known TE insertion file (The sequence ID should follow the naming format CHR-POS-ID, e.g., chr1-683234-AluSp#SINE/Alu)  
-- `knownDEL` : Known TE deletion file (from RepeatMasker `.out` or UCSC `.txt`)  
+- `existingTEs` : Known TE annotation file (from RepeatMasker `.out` or UCSC `.txt`)  
 - `CHR` : Chromosome used to simulate pTE  
 
 **Optional arguments:**  
+- `nINS` : Number of TE insertions to simulate from `--knownINS` (default: 0)
+- `nDEL` : Number of TE deletions to simulate from `--existingTEs` (default: 0)
+- `nEXC` : Number of LTR-LTR recombinations (excisions of full-length LTR elements into solo LTRs); requires a RepeatMasker `.out` `--existingTEs` file, and the LTR family must be included in `--TEtype` (default: 0)
 - `DELlen` : A minimum length of known TE deletions to be considered for simulating pTE deletions (default: 100 bp)
 - `nMIN` : A minimum number of TE deletions for each TE super family to be simulated (default: 0)
 - `nSV` : Number of background structural variants to simulate (default: 0)
 - `outprefix` : Output prefix for BED file (default: real)  
-- `nTE` : Number of pTE insertions (default: all TEs)
 - `TEtype` : Which TE super families to be extracted from the TE deletion file (default: Alu, L1, and SVA). Specify the TE type by `--TEtype Alu --TEtype L1`
-- `ins-ratio` : Proportion of insertion events (default: 0.4)  
 - `seed` : Random seed (default: None)  
 
 ### 3. TEpan
@@ -143,12 +160,12 @@ Generate pTE position from Pangenome graph.
 
 **Optional arguments:**  
 - `outprefix` : Output prefix for BED file (default: TEpan)
-- `nTE` : Number of pTE insertions (default: all TEs)
+- `nINS` : Number of TE insertions to simulate from the pangenome graph (default: 0)
+- `nDEL` : Number of TE deletions to simulate from the pangenome graph (default: 0)
 - `minLen` : Minimum length of structural variants to consider (default: 250)  
 - `cov` : Minimum TE coverage to consider a structural variant as TE (0-1, default: 0.5)
 - `tmpDir` : Temporary directory for intermediate files (default: tmp_TEpan)
 - `TEtype` : TEs to be extracted from the TE deletion file, with the default set as LINE, SINE, LTR, and RC. Specify the TE type by `--TEtype LINE --TEtype SINE`
-- `ins-ratio` : Proportion of insertion events (default: 0.4)  
 - `seed` : Random seed (default: None)  
 
 ### 4. Simulate
@@ -168,6 +185,15 @@ Simulate pTE insertions/deletions and generate VCF and modified genome FASTA.
 - `tsd-min / --tsd-max` : Min/max TSD length (default: 5/20)  
 - `sense-strand-ratio` : Proportion of sense-strand insertions (default: 0.5)  
 - `seed` : Random seed (default: None)  
+
+**Event types in the output VCF** (`INFO/TYPE`):
+- `INS` : a TE insertion (point event; the inserted sequence comes from the TE pool).
+- `DEL` : a TE deletion (a reference span is removed).
+- `EXC` : an LTR-LTR recombination. `POS` is the 5' start of the full-length element, `REF` is
+  the full `LTR-Internal-LTR` element, and `ALT` is the solo LTR left behind. `INFO/LTRLEN`
+  gives the solo LTR length and `INFO/SVLEN` the (negative) net length change. Genotype 0
+  keeps the full element; genotype 1 carries the solo LTR. Excision events are encoded in the
+  BED with an `EXC-` ID prefix and a 7th column carrying the LTR length.
 
 
 ### 5. Readsim

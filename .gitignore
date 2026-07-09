@@ -8,6 +8,7 @@ testData/*
 !testData/Homo_sapiens_DFAM.fa
 !testData/chr21_tiny.fa
 !testData/chr21_tiny.fa.fai
+!testData/ltr_element.out
 
 # Build
 build

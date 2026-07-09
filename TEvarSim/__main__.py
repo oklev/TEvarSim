@@ -12,6 +12,7 @@ class positive_int(int):
         self = super().__new__(self, value)
         if self < 0:
             raise ValueError(f"Must be a positive integer: {value}")
+        return self
 
 class ratio(float):
     def __new__(self, value):
@@ -68,10 +69,12 @@ def main():
                     help="Comma-separated list of chromosome(s) to simulate TE insertions on (e.g., chr21,chr22,chr23). Default: all")
     p1.add_argument("--TEtype", "-e", type=str, action="append",
                     help="Which TE super families to be extracted from the TE deletion file. Default: all")
-    p1.add_argument("--nTE", "-N", type=int, default=100, 
-                    help="Number of polymorphic TE (pTE) insertions to simulate (default: 100)")
-    p1.add_argument("--ins-ratio", "-R", type=ratio, default=0.6, 
-                    help="Proportion of insertion events among all simulated pTE (0-1, default: 0.6)")
+    p1.add_argument("--nINS", "-N", type=int, default=0,
+                    help="Number of random TE insertions to simulate (default: 0)")
+    p1.add_argument("--nDEL", type=int, default=0,
+                    help="Number of TE deletions to simulate from --existingTEs (default: 0)")
+    p1.add_argument("--nEXC", type=int, default=0,
+                    help="Number of LTR-LTR recombinations (excisions of full-length LTR elements into solo LTRs) to simulate from --existingTEs; requires a RepeatMasker .out file (default: 0)")
     p1.add_argument("--outprefix", "-O", type=File_Path, default="TErandom", 
                     help="Output prefix for the generated TE pool FASTA file and the bed file (default: TErandom)")
     p1.add_argument("--DELlen", type=int, default=100,
@@ -133,10 +136,12 @@ def main():
     # Output
     p2.add_argument("--outprefix", "-O", type=File_Path, default="TEreal", 
                     help="Output prefix for generated BED file (default: 'TEreal')")
-    p2.add_argument("--nTE", "-N", type=int,
-                    help="Number of polymorphic TE (pTE) insertions to simulate (default: all TEs)")
-    p2.add_argument("--ins-ratio", "-R", type=ratio, default=0.4, 
-                    help="Proportion of insertion events among all simulated pTE (0-1, default: 0.4)")
+    p2.add_argument("--nINS", "-N", type=int, default=0,
+                    help="Number of TE insertions to simulate from --knownINS (default: 0)")
+    p2.add_argument("--nDEL", type=int, default=0,
+                    help="Number of TE deletions to simulate from --existingTEs (default: 0)")
+    p2.add_argument("--nEXC", type=int, default=0,
+                    help="Number of LTR-LTR recombinations (excisions of full-length LTR elements into solo LTRs) to simulate from --existingTEs; requires a RepeatMasker .out file (default: 0)")
     # Other
     p2.add_argument("--seed", "-D", type=int, default=None, 
                     help="Random seed for reproducibility (default: None)")
@@ -160,10 +165,12 @@ def main():
                     help="Minimum TE coverage to consider a structural variant as TE (0-1, default: 0.5)")
     p3.add_argument("--tmpDir", "-T", type=str, default="tmp_TEpan", 
                     help="Temporary directory for intermediate files (default: tmp_TEpan)")
-    p3.add_argument("--nTE", "-N", type=int, 
-                    help="Number of polymorphic TE (pTE) insertions to simulate (default: all TEs)")
-    p3.add_argument("--ins-ratio", "-R", type=ratio, default=0.4, 
-                    help="Proportion of insertion events among all simulated pTE (0-1, default: 0.4)")
+    p3.add_argument("--nINS", "-N", type=int, default=0,
+                    help="Number of TE insertions to simulate from the pangenome graph (default: 0)")
+    p3.add_argument("--nDEL", type=int, default=0,
+                    help="Number of TE deletions to simulate from the pangenome graph (default: 0)")
+    p3.add_argument("--nEXC", type=int, default=0,
+                    help="LTR-LTR recombination (--nEXC) is not yet supported for TEpan (must be 0)")
     # Output
     p3.add_argument("--outprefix", "-O", type=File_Path, default="TEpan", 
                     help="Prefix for output files (VCF + modified genome FASTA)")
@@ -266,15 +273,22 @@ def main():
         sys.exit(1)
     
     args = parser.parse_args()
+    if args.command in ("TErandom", "TEreal", "TEpan"):
+        if args.nINS < 0 or args.nDEL < 0 or args.nEXC < 0:
+            parser.error("--nINS, --nDEL, and --nEXC must be non-negative.")
+        if args.nINS + args.nDEL + args.nEXC == 0:
+            parser.error("Nothing to simulate: set at least one of --nINS, --nDEL, --nEXC to a value > 0.")
     if args.command == "TErandom":
-        if not args.existingTEs:
-            if args.ins_ratio < 1:
-                if "--ins-ratio" in sys.argv or "-R" in sys.argv:
-                    p1.error("--existingTEs is required for insertion ratio < 1")
-                else:
-                    print("Warning: setting ins-ratio to 1 because no existingTEs file was provided.",file=sys.stderr)
-                    args.ins_ratio = 1
-    if args.command == "simulate":
+        if (args.nDEL > 0 or args.nEXC > 0) and not args.existingTEs:
+            p1.error("--existingTEs is required when --nDEL or --nEXC > 0.")
+        if args.nEXC > 0 and not str(args.existingTEs).lower().endswith(".out"):
+            p1.error("--nEXC requires a RepeatMasker .out --existingTEs file (LTR fragment structure is needed to identify full-length elements).")
+    if args.command == "TEreal":
+        if args.nEXC > 0 and not str(args.existingTEs).lower().endswith(".out"):
+            p2.error("--nEXC requires a RepeatMasker .out --existingTEs file (LTR fragment structure is needed to identify full-length elements).")
+    if args.command == "TEpan" and args.nEXC > 0:
+        p3.error("LTR-LTR recombination (--nEXC) is not yet supported for TEpan.")
+    if args.command == "Simulate":
         if args.diverse_config and not args.diverse:
             parser.error("--diverse_config requires --diverse to be set")
     args.func(args)

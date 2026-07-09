@@ -27,8 +27,8 @@ class panTE:
         self.lib = args.lib
         self.cov = args.cov
         self.CHR = args.CHR
-        self.nTE = args.nTE
-        self.ins_ratio = args.ins_ratio
+        self.nINS = args.nINS
+        self.nDEL = args.nDEL
         self.tmpDir = args.tmpDir
         self.outprefix = args.outprefix
         self.random_seed = args.seed
@@ -130,37 +130,28 @@ class panTE:
         # output
         fa = open(FASTA, "w")
         bed = open(BED, "w")
-        if self.nTE:
-            random.shuffle(outInfo)
-            nINS = int(self.nTE * self.ins_ratio)
-            nDEL = self.nTE - nINS
-            cDEL = 0
-            cINS = 0
-            for i in outInfo:
-                SVtype = i[3]
-                if SVtype == "INS":
-                    cINS += 1
-                else:
-                    cDEL += 1
-                if cDEL > nDEL and cINS >nINS:
-                    break
-                else:
-                    if cDEL > nDEL and SVtype=="DEL":
-                        continue
-                    if cINS > nINS and SVtype=="INS":
-                        continue
-                fa.write(f">{i[0]}\n")
-                fa.write(i[2] + "\n")
-                chrom, pos = i[0].split(":")
-                start, end, _ = pos.split("-", 2)
-                bed.write(f"{chrom}\t{int(start) - 1}\t{end}\t{i[0]}\n")
-        else:
-            for i in outInfo:
-                fa.write(f">{i[0]}\n")
-                fa.write(i[2] + "\n")
-                chrom, pos = i[0].split(":")
-                start, end, _ = pos.split("-", 2)
-                bed.write(f"{chrom}\t{int(start) - 1}\t{end}\t{i[0]}\n")
+        random.shuffle(outInfo)
+        nINS = self.nINS
+        nDEL = self.nDEL
+        cDEL = 0
+        cINS = 0
+        for i in outInfo:
+            SVtype = i[3]
+            if SVtype == "INS":
+                if cINS >= nINS:
+                    continue
+                cINS += 1
+            else:
+                if cDEL >= nDEL:
+                    continue
+                cDEL += 1
+            fa.write(f">{i[0]}\n")
+            fa.write(i[2] + "\n")
+            chrom, pos = i[0].split(":")
+            start, end, _ = pos.split("-", 2)
+            bed.write(f"{chrom}\t{int(start) - 1}\t{end}\t{i[0]}\n")
+            if cINS >= nINS and cDEL >= nDEL:
+                break
 
 
 def run(args):

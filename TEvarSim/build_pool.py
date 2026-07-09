@@ -110,8 +110,9 @@ class RandomTE:
                     new_regions.append(region)
                 self.regions = new_regions
 
-        self.nTE = args.nTE
-        self.ins_ratio = args.ins_ratio
+        self.nINS = args.nINS
+        self.nDEL = args.nDEL
+        self.nEXC = args.nEXC  # number of LTR-LTR recombinations (excisions)
         self.TEtype = TEtype(args.TEtype)
         self.prefix = args.outprefix
         self.DELlen = args.DELlen
@@ -123,60 +124,84 @@ class RandomTE:
             np.random.seed(self.random_seed)
             random.seed(self.random_seed)
 
-
+        # Strand targeting applies to placed insertions and selected deletions; excisions inherit
+        # the orientation of the reference element, so they are not part of the strand budget.
+        n_strand = self.nDEL + self.nINS
         if args.sense_strand_ratio is not None:
-            n_sense = round(self.nTE*args.sense_strand_ratio)
-            self.target_strands = (["+"] * n_sense) + (["-"] * (self.nTE - n_sense))
+            n_sense = round(n_strand*args.sense_strand_ratio)
+            self.target_strands = (["+"] * n_sense) + (["-"] * (n_strand - n_sense))
             np.random.shuffle(self.target_strands)
         else:
-            self.target_strands = [None] * self.nTE
+            self.target_strands = [None] * n_strand
 
     def _run(self):
-        # 1. parse DEL file
+        # 1. parse DEL file (populates self.DEL, and self.EXC candidates for RepeatMasker input)
         self.parse_DEL()
-        # 2. parse TEpool
-        # The pool fasta was sized by round(nTE * ins_ratio) in TEPoolBuilder, so we can't
-        # silently grow nINS to make up for a shortfall in available deletions - we'd run
-        # out of pool records. Require enough DEL up front.
-        self.nDEL = int(round(self.nTE * (1 - self.ins_ratio)))
+        # 2. select excisions (full-length LTR elements) first, then drop those loci from the
+        #    deletion candidate pool so a locus is never used as both a DEL and an EXC.
+        self.select_EXC()
+        # 3. select deletions from the remaining candidates
         if self.nDEL > len(self.DEL):
             raise ValueError(
                 f"Requested {self.nDEL} deletions but only {len(self.DEL)} available in --existingTEs "
-                f"after filtering. Lower --nTE, raise --ins-ratio, or relax --TEtype/--DELlen."
+                f"after filtering (and after removing excision loci). Lower --nDEL, or relax --TEtype/--DELlen."
             )
-        logging.info(f"Generating {self.nTE - self.nDEL} INS and {self.nDEL} DEL for chromosome(s) {','.join(self.CHR.keys())}")
-        if self.nMIN >= self.nTE:
-            raise ValueError(f"minumum number of a TE family ({self.nMIN}) should be less than nTE ({self.nTE})")
+        logging.info(f"Generating {self.nINS} INS, {self.nDEL} DEL and {self.nEXC} EXC for chromosome(s) {','.join(self.CHR.keys())}")
+        nplaced = self.nDEL + self.nINS
+        if self.nMIN > 0 and self.nMIN >= nplaced:
+            raise ValueError(f"minimum number of a TE family ({self.nMIN}) should be less than nDEL+nINS ({nplaced})")
         if self.nMIN > 0:
             self.DEL = make_min_TE(self.DEL, self.nMIN, self.nDEL, self.TEtype, self.target_strands[:self.nDEL])
         else:
             self.DEL = pick_stranded(self.DEL, self.nDEL, self.target_strands[:self.nDEL])
-        self.nINS = self.nTE - len(self.DEL)
+        # 4. place insertions (avoiding both selected DEL and EXC spans)
         self.parse_TEpool()
-        # 3. Generate BED file
+        # 5. Generate BED file
         self.build_bed()
         logging.info(f"Generated TE BED file: {self.prefix}.bed")
-        # 4. Add background SVs if specified
+        # 6. Add background SVs if specified
         if self.nSV > 0:
             bedin = self.prefix + ".bed"
             bedout = self.prefix + ".bgSV.bed"
-            bgSV(bedin, bedout, self.nSV, self.ins_ratio, self.pool_fasta, self.out_fasta)
+            bg_ins_ratio = self.nINS / (self.nINS + self.nDEL) if (self.nINS + self.nDEL) > 0 else 0.5
+            bgSV(bedin, bedout, self.nSV, bg_ins_ratio, self.pool_fasta, self.out_fasta)
             logging.info(f"Generated BED file and fasta file with background SVs are: {bedout} and {self.out_fasta}")
 
+    def select_EXC(self):
+        """Pick nEXC full-length LTR elements to excise, and remove their loci from self.DEL."""
+        if not hasattr(self, "EXC"):
+            self.EXC = []
+        if self.nEXC == 0:
+            self.EXC = []
+            return
+        if self.nEXC > len(self.EXC):
+            raise ValueError(
+                f"Requested {self.nEXC} excisions but only {len(self.EXC)} full-length LTR elements "
+                f"available in --existingTEs after filtering. Lower --nEXC, or relax --TEtype/--DELlen."
+            )
+        chosen = random.sample(self.EXC, self.nEXC)
+        chosen_spans = {(c[0], c[1], c[2]) for c in chosen}
+        self.DEL = [d for d in self.DEL if (d[0], d[1], d[2]) not in chosen_spans]
+        self.EXC = chosen
+
     def build_bed(self):
-        # merge INS and DEL
-        merged = self.INS + self.DEL
+        # merge INS, DEL and EXC
+        merged = self.INS + self.DEL + self.EXC
         merged.sort()
         # bedfile output
         bed_name = self.prefix + ".bed"
         check_output_file(bed_name)
         with open(bed_name, "w") as f:
-            for chrom, start, end, teID, __, __, strand, *__ in merged:
-                f.write("\t".join([chrom, str(start), str(end), teID, ".", strand]) + "\n")
+            for chrom, start, end, teID, _cls, _typ, strand, *rest in merged:
+                cols = [chrom, str(start), str(end), teID, ".", strand]
+                if rest:  # EXC records carry the LTR length as a 7th column
+                    cols.append(str(rest[0]))
+                f.write("\t".join(cols) + "\n")
         logging.info(f"Generated BED file: {bed_name}")
     
     def parse_DEL(self):
         self.DEL = []
+        self.EXC = []  # full-length LTR elements eligible for excision (RepeatMasker input only)
         if not self.DELfile:
             return
         # process file
@@ -254,6 +279,7 @@ class RandomTE:
                 strand = "+"
             else:
                 strand = "-"
+            is_full_ltr = False
             if len(match_name) == 1:
                 name = next(iter(match_name))
                 class_fam = next(iter(match_class_fam))
@@ -266,13 +292,22 @@ class RandomTE:
                 match_max = next(iter(match_name.values()))
                 matches = [n for n in match_name if match_name[n] >= 0.2*match_max]
                 name = "|".join(matches)
-                if ty_i and te_info[0][9][-4:] == "-LTR" and te_info[-1][9][-4:] == "-LTR":
+                # Full-length LTR element: an internal (-I) region flanked by two LTR (-LTR)
+                # fragments. These are the elements eligible for LTR-LTR recombination (excision).
+                is_full_ltr = bool(ty_i) and te_info[0][9][-4:] == "-LTR" and te_info[-1][9][-4:] == "-LTR"
+                if is_full_ltr:
                     name += "-FULL"
                 class_fam = next(iter(match_class_fam))
             repClass = class_fam.split("/")[0]
             if repClass in self.TEtype:
                 teID = f"DEL-{chrom}-{start}-{end}-{class_fam}-{name}"
                 self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
+                if is_full_ltr:
+                    # 5' LTR fragment length; the solo LTR left behind spans [start, start+ltr_len).
+                    ltr_len = te_info[0][6] - te_info[0][5]
+                    if 0 < ltr_len < end - start:
+                        exc_id = f"EXC-{chrom}-{start}-{end}-{ltr_len}-{class_fam}-{name}"
+                        self.EXC.append((chrom, start, end, exc_id, repClass, "EXC", strand, ltr_len))
     
     def parse_TEpool(self):
         self.INS = []
@@ -281,7 +316,9 @@ class RandomTE:
         records = list(SeqIO.parse(self.pool_fasta, "fasta"))
         # Guard against lst[-0:] == lst[0:] (whole list); explicitly take the last nINS entries.
         ins_strands = self.target_strands[-self.nINS:]
-        INSpos = sample_TEins(self.regions, self.DEL, self.nINS, TEdistance=self.TEdistance, target_strands=ins_strands)
+        # Insertions must avoid both selected deletion and excision spans.
+        exclusion = self.DEL + self.EXC
+        INSpos = sample_TEins(self.regions, exclusion, self.nINS, TEdistance=self.TEdistance, target_strands=ins_strands)
         for record, (chrom, pos, strand) in zip(records,INSpos):
             self.INS.append((chrom, pos, pos, record.id, record.id.split("/")[1], "INS", strand))
 
@@ -289,9 +326,7 @@ class TEPoolBuilder:
     def __init__(self, args):
         # base
         self.consensus = args.consensus
-        self.nTE = args.nTE
-        self.ins_ratio = args.ins_ratio
-        self.nINS = round(self.nTE * self.ins_ratio)
+        self.nINS = args.nINS
         self.prefix = args.outprefix
         # SNP and INDEL
         self.snp_rate = args.snp_rate

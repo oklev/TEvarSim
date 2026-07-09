@@ -10,7 +10,7 @@ def load_truth_vcf(vcf_file, sampleID, INSonly, TEtype):
     for record in vcf:
         varID = record.id
         if INSonly:
-            if varID.startswith("DEL"):
+            if varID.startswith("DEL") or varID.startswith("EXC"):
                 continue
             TEfamily = varID.split("/")[1].split("_")[0]
             if TEfamily == TEtype:
@@ -24,7 +24,7 @@ def load_truth_vcf(vcf_file, sampleID, INSonly, TEtype):
                 else:
                     variants[record.chrom] = [(record.pos, gt)]
         else:
-            if varID.startswith("DEL"):
+            if varID.startswith("DEL") or varID.startswith("EXC"):
                 TEfamily = varID.split("/")[1].split("-")[0]
             else:
                 TEfamily = varID.split("/")[1].split("_")[0]

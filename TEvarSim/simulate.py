@@ -91,6 +91,7 @@ class Simulator:
                 "events":[],
                 "chunks":[],
                 "cols_to_replace":[],
+                "gt_row":[],
                 "flipped":[],
                 "col_index":0,
                 "start":0
@@ -130,14 +131,27 @@ class Simulator:
                 te_id = "DEL" if te_id == "-" else te_id # If TE deletion has no ID, assign "DEL"
                 start = int(start)
                 end = int(end)
-                event_type = "INS" if end-start <= 1 else "DEL"
+                ltr_len = None
+                if te_id.startswith("EXC"):
+                    # LTR-LTR recombination (excision): the reference span [start,end) is a
+                    # full-length LTR element that collapses to a solo LTR. The LTR length is
+                    # carried in an optional 7th BED column, falling back to the teID encoding
+                    # EXC-{chrom}-{start}-{end}-{ltrlen}-{class/fam}-{name}.
+                    event_type = "EXC"
+                    if len(line) > 6 and line[6]:
+                        ltr_len = int(line[6])
+                    else:
+                        ltr_len = int(te_id.split("-")[4])
+                else:
+                    event_type = "INS" if end-start <= 1 else "DEL"
                 self.TEevents.append({
                     "chrom":chrom,
                     "start": start,
                     "end": end,
                     "te_id": te_id,
                     "type": event_type,
-                    "strand":strand
+                    "strand":strand,
+                    "ltr_len": ltr_len
                 })
         print(f"[INFO] Parsed {len(self.TEevents)} TE events from BED.",file=sys.stderr)
         print(f"[INFO] Example event: {self.TEevents[0] if self.TEevents else 'No events'}",file=sys.stderr)
@@ -197,6 +211,13 @@ class Simulator:
                 # tsd_seq = ref_seq[start-tsd_len : start]
                 tsd_seq = self.CHR[chrom]["seq"][start-tsd_len+1 : start+1]
                 alt_allele = self.CHR[chrom]["seq"][start - 1] + str(te_seq) + tsd_seq
+            elif event["type"] == "EXC":
+                # LTR-LTR recombination: REF is the full LTR-I-LTR element, ALT is the anchor
+                # base plus the solo LTR left behind (the element's 5' LTR).
+                ltr_len = event["ltr_len"]
+                ref_allele = self.CHR[chrom]["seq"][start-1:end]
+                solo_ltr = self.CHR[chrom]["seq"][start:start+ltr_len]
+                alt_allele = self.CHR[chrom]["seq"][start-1] + solo_ltr
             else:
                 # REF sequence
                 ref_allele = self.CHR[chrom]["seq"][start-1:end]
@@ -243,8 +264,10 @@ class Simulator:
             vcf.write("##fileformat=VCFv4.2\n")
             for chr in self.CHR:
                 vcf.write(f"##contig=<ID={chr},length={self.CHR[chr]['len']}>\n")
-            vcf.write('##INFO=<ID=TYPE,Number=1,Type=String,Description="Variant type (INS or DEL)">\n')
+            vcf.write('##INFO=<ID=TYPE,Number=1,Type=String,Description="Variant type (INS, DEL, or EXC for LTR-LTR recombination)">\n')
             vcf.write('##INFO=<ID=STRAND,Number=1,Type=String,Description="Insertion strand (+ or -)">\n')
+            vcf.write('##INFO=<ID=LTRLEN,Number=1,Type=Integer,Description="Length of the solo LTR left behind by LTR-LTR recombination (EXC only)">\n')
+            vcf.write('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Net length change of the variant, negative for excision (EXC only)">\n')
             vcf.write('##INFO=<ID=TSD,Number=1,Type=Integer,Description="Target site duplication length">\n')
             vcf.write('##INFO=<ID=TEFAMILY,Number=1,Type=String,Description="TE family ID from consensus">\n')
             vcf.write('##INFO=<ID=SNP,Number=1,Type=Integer,Description="Number of SNP modifications in TE sequence">\n')
@@ -285,6 +308,9 @@ class Simulator:
                             val = mods.get("n" + key)
                             if val is not None:
                                 info_parts.append(f"{key}={val}")
+                    elif event_type == "EXC":
+                        info_parts.append(f"LTRLEN={event['ltr_len']}")
+                        info_parts.append(f"SVLEN={len(alt) - len(ref)}")
 
                     info_str = ";".join(info_parts)
                     vcf.write(f"{chrom}\t{pos}\t{var_id}\t{ref}\t{alt}\t.\tPASS\t{info_str}\tGT\t" + "\t".join(genotypes) + "\n")
@@ -300,7 +326,7 @@ class Simulator:
         for chrom,chr_info in self.CHR.items():
             if not chr_info["events"]:
                 continue
-            for event in chr_info["events"]:
+            for event_idx, event in enumerate(chr_info["events"]):
                 # events MUST be sorted
                 SVtype = event['type']
                 left = event['start']
@@ -312,12 +338,27 @@ class Simulator:
                     chr_info["col_index"] += 1
                 if SVtype == "INS":
                     chr_info["chunks"].append(event["alt"][1:])
+                    chr_info["cols_to_replace"].append(chr_info["col_index"])
+                    chr_info["gt_row"].append(event_idx)
+                elif SVtype == "EXC":
+                    # Substitution: the full element chunk is present when the genotype is 0
+                    # (flipped, like a deletion) and the solo LTR chunk when it is 1. Both
+                    # chunks are driven by the same event genotype row.
+                    chr_info["chunks"].append(event["ref"][1:])   # full LTR-I-LTR element
+                    chr_info["flipped"].append(chr_info["col_index"])
+                    chr_info["cols_to_replace"].append(chr_info["col_index"])
+                    chr_info["gt_row"].append(event_idx)
+                    chr_info["col_index"] += 1
+                    chr_info["chunks"].append(event["alt"][1:])   # solo LTR
+                    chr_info["cols_to_replace"].append(chr_info["col_index"])
+                    chr_info["gt_row"].append(event_idx)
                 else:
                     chr_info["chunks"].append(event["ref"][1:])
                     chr_info["flipped"].append(chr_info["col_index"])
-                chr_info["cols_to_replace"].append(chr_info["col_index"])
+                    chr_info["cols_to_replace"].append(chr_info["col_index"])
+                    chr_info["gt_row"].append(event_idx)
                 chr_info["col_index"] += 1
-                chr_info["start"] = right    
+                chr_info["start"] = right
 
             # Check if the last TE occurs at the end of the genome
             genome_len = chr_info["len"]
@@ -342,7 +383,11 @@ class Simulator:
                 cols_to_replace = chr_info["cols_to_replace"]
                 flipped = chr_info["flipped"]
                 indexMat = np.ones((len(chunks), self.num_genomes))
-                indexMat[cols_to_replace,:] = chr_info["genotypes"]
+                # Each genotype-controlled chunk copies the genotype row of its source event.
+                # A single event may drive more than one chunk (EXC: full element + solo LTR),
+                # so map chunk -> event row explicitly rather than assuming a 1:1 layout.
+                for chunk_idx, ev in zip(cols_to_replace, chr_info["gt_row"]):
+                    indexMat[chunk_idx] = chr_info["genotypes"][ev]
                 for idx in range(self.num_genomes):
                     mask = indexMat[:, idx].astype(bool)
                     mask[flipped] = ~mask[flipped]
