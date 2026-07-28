@@ -227,8 +227,10 @@ class CompareVCF:
         fn = b_len - tp
         bgt = [bench_gt[i] for i in match_idxb]
         cgt = [compare_gt[i] for i in match_idxc]
-        # genotype accuracy
-        if len(bgt[0]) != len(cgt[0]):
+        # genotype accuracy. Guard on a non-empty match set: a chromosome can carry truth and
+        # prediction variants yet match none of them (tp == 0), leaving bgt/cgt empty -- indexing
+        # bgt[0] then raised IndexError and killed the whole comparison.
+        if bgt and len(bgt[0]) != len(cgt[0]):
             # print("Warning: the number of allele is different between truth and prediction files")
             # print("Warning: filling the missing alleles in truth VCF, e.g., 1 -> 1/1")
             for i in range(len(bgt)):
