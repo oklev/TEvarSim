@@ -56,215 +56,215 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # 1. TErandom
-    p1 = subparsers.add_parser("TErandom", 
+    TErandom_parser = subparsers.add_parser("TErandom", 
                                help="Generate pTE position from known deletion sites and random TE insertion")
     # Base
-    p1.add_argument("--ref", "-F", type=Fasta_File_Path, required=True, 
+    TErandom_parser.add_argument("--ref", "-F", type=Fasta_File_Path, required=True, 
                     help="Reference genome FASTA file")
-    p1.add_argument("--consensus", "-C", type=Fasta_File_Path,  required=True,
+    TErandom_parser.add_argument("--consensus", "-C", type=Fasta_File_Path,  required=True,
                     help="Path to the TE consensus FASTA file. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu")
-    p1.add_argument("--existingTEs", "-L", type=Existing_File_Path, required=False, 
+    TErandom_parser.add_argument("--existingTEs", "-L", type=Existing_File_Path, required=False, 
                     help="Input known TE deletion file (RepeatMasker .out or UCSC .txt)")
-    p1.add_argument("--CHR", "-H", type=str,
+    TErandom_parser.add_argument("--CHR", "-H", type=str,
                     help="Comma-separated list of chromosome(s) to simulate TE insertions on (e.g., chr21,chr22,chr23). Default: all")
-    p1.add_argument("--TEtype", "-e", type=str, action="append",
+    TErandom_parser.add_argument("--TEtype", "-e", type=str, action="append",
                     help="Which TE super families to be extracted from the TE deletion file. Default: all")
-    p1.add_argument("--nINS", "-N", type=int, default=0,
+    TErandom_parser.add_argument("--nINS", "-N", type=int, default=0,
                     help="Number of random TE insertions to simulate (default: 0)")
-    p1.add_argument("--nDEL", type=int, default=0,
+    TErandom_parser.add_argument("--nDEL", type=int, default=0,
                     help="Number of TE deletions to simulate from --existingTEs (default: 0)")
-    p1.add_argument("--nEXC", type=int, default=0,
+    TErandom_parser.add_argument("--nEXC", type=int, default=0,
                     help="Number of LTR-LTR recombinations (excisions of full-length LTR elements into solo LTRs) to simulate from --existingTEs; requires a RepeatMasker .out file (default: 0)")
-    p1.add_argument("--outprefix", "-O", type=File_Path, default="TErandom", 
+    TErandom_parser.add_argument("--outprefix", "-O", type=File_Path, default="TErandom", 
                     help="Output prefix for the generated TE pool FASTA file and the bed file (default: TErandom)")
-    p1.add_argument("--DELlen", type=int, default=100,
+    TErandom_parser.add_argument("--DELlen", type=int, default=100,
                     help="A minimum length of known TE deletions to be considered for simulating pTE deletions (default: 100 bp)")
-    p1.add_argument("--nMIN", type=int, default=0,
+    TErandom_parser.add_argument("--nMIN", type=int, default=0,
                     help="A minimum number of TE deletions for each TE super family to be simulated (default: 0)")
-    p1.add_argument("--TEdistance", type=positive_int, default=500,
+    TErandom_parser.add_argument("--TEdistance", type=positive_int, default=500,
                     help="A minimum length of distance between two TE insertions (default: 500)")
-    p1.add_argument("--nSV", type=int, default=0, help="Number of background structural variants to simulate (default: 0)")
-    p1.add_argument("--regions", type=Existing_File_Path, 
+    TErandom_parser.add_argument("--nSV", type=int, default=0, help="Number of background structural variants to simulate (default: 0)")
+    TErandom_parser.add_argument("--regions", type=Existing_File_Path, 
                     help="Bed file with regions to include in the simulation.")
-    p1.add_argument("--exclude", type=Existing_File_Path, 
+    TErandom_parser.add_argument("--exclude", type=Existing_File_Path, 
                     help="Bed file with regions to exclude from the simulation.")
-    p1.add_argument("--sense-strand-ratio", type=ratio, default=None, 
+    TErandom_parser.add_argument("--sense-strand-ratio", type=ratio, default=None, 
                     help="Proportion of TE variants in the sense strand (default: no strand preference)")
     # SNP and INDEL
-    p1.add_argument("--snp-rate", "-S", type=ratio, default=0.02, 
+    TErandom_parser.add_argument("--snp-rate", "-S", type=ratio, default=0.02, 
                     help="SNP mutation rate per base (default: 0.02)")
-    p1.add_argument("--indel-rate", "-I", type=ratio, default=0.005, 
+    TErandom_parser.add_argument("--indel-rate", "-I", type=ratio, default=0.005, 
                     help="Indel mutation rate per base (default: 0.005)")
-    p1.add_argument("--indel-ins", "-r", type=ratio, default=0.4, 
+    TErandom_parser.add_argument("--indel-ins", "-r", type=ratio, default=0.4, 
                     help="Proportion of insertion events among INDELs (0-1, default: 0.4)")
-    p1.add_argument("--indel-geom-p", "-G", type=ratio, default=0.7, 
+    TErandom_parser.add_argument("--indel-geom-p", "-G", type=ratio, default=0.7, 
                     help="Parameter 'p' of geometric distribution for indel lengths (default: 0.7)")
     # Truncation
-    p1.add_argument("--truncated-ratio", "-T", type=ratio, default=0.3, 
+    TErandom_parser.add_argument("--truncated-ratio", "-T", type=ratio, default=0.3, 
                     help="Proportion of TE sequences to truncate (0-1, default: 0.3)")
-    p1.add_argument("--truncated-max-length", "-K", type=ratio, default=0.5, 
+    TErandom_parser.add_argument("--truncated-max-length", "-K", type=ratio, default=0.5, 
                     help="Maximum proportion of sequence length to truncate (0-1, default: 0.5)")
     # PolyA
-    p1.add_argument("--polyA-ratio", "-A", type=ratio, default=0.8, 
+    TErandom_parser.add_argument("--polyA-ratio", "-A", type=ratio, default=0.8, 
                     help="Proportion of TE sequences to add polyA tail (0-1, default: 0.8)")
-    p1.add_argument("--polyA-min", "-M", type=int, default=5, 
+    TErandom_parser.add_argument("--polyA-min", "-M", type=int, default=5, 
                     help="Minimum polyA tail length (default: 5)")
-    p1.add_argument("--polyA-max", "-X", type=int, default=20, 
+    TErandom_parser.add_argument("--polyA-max", "-X", type=int, default=20, 
                     help="Maximum polyA tail length (default: 20)")
     # Other
-    p1.add_argument("--seed", "-D", type=int, default=None, 
+    TErandom_parser.add_argument("--seed", "-D", type=int, default=None, 
                     help="Random seed for reproducibility (default: None)")
-    p1.set_defaults(func=build_pool.run)
+    TErandom_parser.set_defaults(func=build_pool.run)
 
     # 2. TEreal
-    p2 = subparsers.add_parser("TEreal", 
+    TEreal_parser = subparsers.add_parser("TEreal", 
                                help="Generate pTE position from Known TE insertion and deletion")
     # Input
-    p2.add_argument("--knownINS", "-K", type=Existing_File_Path, required=True, 
+    TEreal_parser.add_argument("--knownINS", "-K", type=Existing_File_Path, required=True, 
                     help="Input known TE insertion file (e.g., MEI_Callset)")
-    p2.add_argument("--existingTEs", "-L", type=Existing_File_Path, required=True, 
+    TEreal_parser.add_argument("--existingTEs", "-L", type=Existing_File_Path, required=True, 
                     help="Input known TE deletion file (RepeatMasker .out or UCSC .txt)")
-    p2.add_argument("--TEtype", "-e", type=str, action="append",
+    TEreal_parser.add_argument("--TEtype", "-e", type=str, action="append",
                     help="TEs to be extracted from the TE deletion file, with the default set as LINE, SINE, LTR, and Helitron.")
-    p2.add_argument("--CHR", "-C", type=str, required=True,
+    TEreal_parser.add_argument("--CHR", "-C", type=str, required=True,
                     help="Chromosome to simulate TE insertions on (e.g., chr21 or 21)")
-    p2.add_argument("--DELlen", type=int, default=100,
+    TEreal_parser.add_argument("--DELlen", type=int, default=100,
                     help="A minimum length of known TE deletions to be considered for simulating pTE deletions (default: 100 bp)")
-    p2.add_argument("--nMIN", type=int, default=0,
+    TEreal_parser.add_argument("--nMIN", type=int, default=0,
                     help="A minimum number of TE deletions for each TE super family to be simulated (default: 0)")
-    p2.add_argument("--nSV", type=int, default=0, help="Number of background structural variants to simulate (default: 0)")
+    TEreal_parser.add_argument("--nSV", type=int, default=0, help="Number of background structural variants to simulate (default: 0)")
     # Output
-    p2.add_argument("--outprefix", "-O", type=File_Path, default="TEreal", 
+    TEreal_parser.add_argument("--outprefix", "-O", type=File_Path, default="TEreal", 
                     help="Output prefix for generated BED file (default: 'TEreal')")
-    p2.add_argument("--nINS", "-N", type=int, default=0,
+    TEreal_parser.add_argument("--nINS", "-N", type=int, default=0,
                     help="Number of TE insertions to simulate from --knownINS (default: 0)")
-    p2.add_argument("--nDEL", type=int, default=0,
+    TEreal_parser.add_argument("--nDEL", type=int, default=0,
                     help="Number of TE deletions to simulate from --existingTEs (default: 0)")
-    p2.add_argument("--nEXC", type=int, default=0,
+    TEreal_parser.add_argument("--nEXC", type=int, default=0,
                     help="Number of LTR-LTR recombinations (excisions of full-length LTR elements into solo LTRs) to simulate from --existingTEs; requires a RepeatMasker .out file (default: 0)")
     # Other
-    p2.add_argument("--seed", "-D", type=int, default=None, 
+    TEreal_parser.add_argument("--seed", "-D", type=int, default=None, 
                     help="Random seed for reproducibility (default: None)")
-    p2.set_defaults(func=TE_real.run)
+    TEreal_parser.set_defaults(func=TE_real.run)
 
     # 3. TE from pangenome graph
-    p3 = subparsers.add_parser("TEpan", 
+    TEpan_parser = subparsers.add_parser("TEpan", 
                                help="Generate pTE position from Pangenome graph")
     # Input
-    p3.add_argument("--gfa", "-G", type=Existing_File_Path, required=True, 
+    TEpan_parser.add_argument("--gfa", "-G", type=Existing_File_Path, required=True, 
                     help="GFA file of the pangenome graph")
-    p3.add_argument("--lib", "-L", type=Existing_File_Path, required=True, 
+    TEpan_parser.add_argument("--lib", "-L", type=Existing_File_Path, required=True, 
                     help="RepeatMasker library file")
-    p3.add_argument("--CHR", "-H", type=str, required=True, 
+    TEpan_parser.add_argument("--CHR", "-H", type=str, required=True, 
                     help="Chromosome to simulate TE insertions on (e.g., chr21 or 21)")
-    p3.add_argument("--minLen", "-I", type=int, default= 250,
+    TEpan_parser.add_argument("--minLen", "-I", type=int, default= 250,
                     help="Minimum length of structural variants to consider (default: 250)")
-    p3.add_argument("--TEtype", "-e", type=str, action="append",
+    TEpan_parser.add_argument("--TEtype", "-e", type=str, action="append",
                     help="TEs to be extracted from the RepeatMasker annotation file, with the default set as LINE, SINE, LTR, and Helitron.")
-    p3.add_argument("--cov", "-C", type=ratio, default= 0.5,
+    TEpan_parser.add_argument("--cov", "-C", type=ratio, default= 0.5,
                     help="Minimum TE coverage to consider a structural variant as TE (0-1, default: 0.5)")
-    p3.add_argument("--tmpDir", "-T", type=str, default="tmp_TEpan", 
+    TEpan_parser.add_argument("--tmpDir", "-T", type=str, default="tmp_TEpan", 
                     help="Temporary directory for intermediate files (default: tmp_TEpan)")
-    p3.add_argument("--nINS", "-N", type=int, default=0,
+    TEpan_parser.add_argument("--nINS", "-N", type=int, default=0,
                     help="Number of TE insertions to simulate from the pangenome graph (default: 0)")
-    p3.add_argument("--nDEL", type=int, default=0,
+    TEpan_parser.add_argument("--nDEL", type=int, default=0,
                     help="Number of TE deletions to simulate from the pangenome graph (default: 0)")
-    p3.add_argument("--nEXC", type=int, default=0,
+    TEpan_parser.add_argument("--nEXC", type=int, default=0,
                     help="LTR-LTR recombination (--nEXC) is not yet supported for TEpan (must be 0)")
     # Output
-    p3.add_argument("--outprefix", "-O", type=File_Path, default="TEpan", 
+    TEpan_parser.add_argument("--outprefix", "-O", type=File_Path, default="TEpan", 
                     help="Prefix for output files (VCF + modified genome FASTA)")
-    p3.add_argument("--seed", "-D", type=int, default=None, 
+    TEpan_parser.add_argument("--seed", "-D", type=int, default=None, 
                     help="Random seed for reproducibility (default: None)")
-    p3.set_defaults(func=TEpan.run)
+    TEpan_parser.set_defaults(func=TEpan.run)
 
 
     # 4. simulate
-    p4 = subparsers.add_parser("Simulate", 
+    Simulate_parser = subparsers.add_parser("Simulate", 
                                help="Simulate TE insertions/deletions and generate VCF and modified genome FASTA")
     # Input
-    p4.add_argument("--ref", "-F", type=Fasta_File_Path, required=True, 
+    Simulate_parser.add_argument("--ref", "-F", type=Fasta_File_Path, required=True, 
                     help="Reference genome FASTA file")
-    p4.add_argument("--pool", "-P", type=Fasta_File_Path, required=True, 
+    Simulate_parser.add_argument("--pool", "-P", type=Fasta_File_Path, required=True, 
                     help="FASTA file of TE sequences generated from 'TEpool'")
-    p4.add_argument("--bed", "-B", type=Existing_File_Path, required=True, 
+    Simulate_parser.add_argument("--bed", "-B", type=Existing_File_Path, required=True, 
                     help="BED file containing TE positions (can be generated by 'TEreal')")
     # Output
-    p4.add_argument("--outprefix", "-O", type=File_Path, default="Sim", 
+    Simulate_parser.add_argument("--outprefix", "-O", type=File_Path, default="Sim", 
                     help="Prefix for output files (VCF + modified genome FASTA)")
     # Options
-    p4.add_argument("--num", "-N", type=int, required=True, 
+    Simulate_parser.add_argument("--num", "-N", type=int, required=True, 
                     help="Number of genomes to simulate")
-    p4.add_argument("--diverse", "-I", action="store_true",
+    Simulate_parser.add_argument("--diverse", "-I", action="store_true",
                     help="Introduce sequence diversity among individuals for the same TE event")
-    p4.add_argument("--diverse_config", "-c", type=Existing_File_Path,
+    Simulate_parser.add_argument("--diverse_config", "-c", type=Existing_File_Path,
                     help="Path to a configuration file for introducing sequence diversity among individuals for the same TE event")
-    p4.add_argument("--af-min", "-A", type=ratio, default=0.1, 
+    Simulate_parser.add_argument("--af-min", "-A", type=ratio, default=0.1, 
                     help="Minimum allele frequency for simulated TE variants (default: 0.1)")
-    p4.add_argument("--af-max", "-X", type=ratio, default=0.9, 
+    Simulate_parser.add_argument("--af-max", "-X", type=ratio, default=0.9, 
                     help="Maximum allele frequency for simulated TE variants (default: 0.9)")
-    p4.add_argument("--tsd-min", "-M", type=int, default=5, 
+    Simulate_parser.add_argument("--tsd-min", "-M", type=int, default=5, 
                     help="Minimum TSD length (default: 5)")
-    p4.add_argument("--tsd-max", "-Y", type=int, default=20, 
+    Simulate_parser.add_argument("--tsd-max", "-Y", type=int, default=20, 
                     help="Maximum TSD length (default: 20)")
-    p4.add_argument("--sense-strand-ratio", "-S", type=ratio, default=0.5, 
+    Simulate_parser.add_argument("--sense-strand-ratio", "-S", type=ratio, default=0.5, 
                     help="Proportion of TE variants in the sense strand (default: 0.5)")
     # Other
-    p4.add_argument("--seed", "-D", type=int, default=None, 
+    Simulate_parser.add_argument("--seed", "-D", type=int, default=None, 
                     help="Random seed for reproducibility (default: None)")
-    p4.set_defaults(func=simulate.run)
+    Simulate_parser.set_defaults(func=simulate.run)
 
     # 5. compare
-    p5 = subparsers.add_parser("Compare", help="Compare predicted VCF to ground truth VCF")
+    Compare_parser = subparsers.add_parser("Compare", help="Compare predicted VCF to ground truth VCF")
     # Input
-    p5.add_argument("--truth", "-T", type=str, required=True, help="Ground truth VCF file")
-    p5.add_argument("--pred", "-P", type=str, required=True, help="Predicted file to compare")
-    p5.add_argument("--predType", "-p", type=str,  choices=["VCF", "BED"], default="VCF", 
+    Compare_parser.add_argument("--truth", "-T", type=str, required=True, help="Ground truth VCF file")
+    Compare_parser.add_argument("--pred", "-P", type=str, required=True, help="Predicted file to compare")
+    Compare_parser.add_argument("--predType", "-p", type=str,  choices=["VCF", "BED"], default="VCF", 
                     help="Type of the predicted file (VCF or BED, default: VCF)")
     # Output
-    p5.add_argument("--outprefix", "-O", type=str, required=True, help="Output matched TEs")
+    Compare_parser.add_argument("--outprefix", "-O", type=str, required=True, help="Output matched TEs")
     # Options
-    p5.add_argument("--truthID", "-I", type=str, required=True, help="Sample ID in the truth VCF")
-    p5.add_argument("--predID", "-J", type=str, required=True, help="Sample ID in the predicted VCF")
-    p5.add_argument("--TEtype", "-e", type=str, default=None, help="TE type in truth VCF to consider in the comparison")
-    p5.add_argument("--INSonly", action="store_true",  help="Only compare insertions in truth VCF")
-    p5.add_argument("--nHap", "-N", type=int, default=2,  help="Number of haplotypes in the genome (default: 2)")
-    p5.add_argument("--max_dist", "-M", type=int, default=100, 
+    Compare_parser.add_argument("--truthID", "-I", type=str, required=True, help="Sample ID in the truth VCF")
+    Compare_parser.add_argument("--predID", "-J", type=str, required=True, help="Sample ID in the predicted VCF")
+    Compare_parser.add_argument("--TEtype", "-e", type=str, default=None, help="TE type in truth VCF to consider in the comparison")
+    Compare_parser.add_argument("--INSonly", action="store_true",  help="Only compare insertions in truth VCF")
+    Compare_parser.add_argument("--nHap", "-N", type=int, default=2,  help="Number of haplotypes in the genome (default: 2)")
+    Compare_parser.add_argument("--max_dist", "-M", type=int, default=100, 
                     help="Maximum allowed distance (bp) to consider two variants as matching")
-    p5.set_defaults(func=compare_vcf.run)
+    Compare_parser.set_defaults(func=compare_vcf.run)
 
     # 6. Read simulation
-    p6 = subparsers.add_parser("Readsim", 
+    Readsim_parser = subparsers.add_parser("Readsim", 
                                help="generate short or long reads from the simulated genome")
     # general
-    p6.add_argument("--type", "-T", choices=["short", "long"],
+    Readsim_parser.add_argument("--type", "-T", choices=["short", "long"],
                     type=str, required=True, help="Simulate short reads or long reads")
-    p6.add_argument("--genome", "-G", type=str, required=True, 
+    Readsim_parser.add_argument("--genome", "-G", type=str, required=True, 
                     help="The file contains genomes where reads simulated from")
-    p6.add_argument("--depth", "-P", type=int, required=True, 
+    Readsim_parser.add_argument("--depth", "-P", type=int, required=True, 
                     help="Depth of simulated reads")
-    #p6.add_argument("--ngenome", "-N", type=int, default= 1, 
+    #Readsim_parser.add_argument("--ngenome", "-N", type=int, default= 1, 
     #                help="Number of genomes for simultaneous reads simulation")
-    #p6.add_argument("--outprefix", "-O", type=str, required=True, 
+    #Readsim_parser.add_argument("--outprefix", "-O", type=str, required=True, 
     #                help="prefix of output files")    
     # long reads settings
-    p6.add_argument("--Lerror", "-E", type=ratio, default= 0.15, 
+    Readsim_parser.add_argument("--Lerror", "-E", type=ratio, default= 0.15, 
                     help="sequencing error rate for long reads (default: 0.15)")
-    p6.add_argument("--Lmean", "-M", type=int,  default= 9000,
+    Readsim_parser.add_argument("--Lmean", "-M", type=int,  default= 9000,
                     help="average size of read length (only for long reads, default: 9000 bp)")
-    p6.add_argument("--Lstd", "-S", type=int, default= 7000,  
+    Readsim_parser.add_argument("--Lstd", "-S", type=int, default= 7000,  
                     help="read length standard deviation (only for long reads, default: 7000 bp)")
     # short reads settings
-    p6.add_argument("--length", "-i", type=int, default= 150, 
+    Readsim_parser.add_argument("--length", "-i", type=int, default= 150, 
                     help="read length (only for short reads, default: 150 bp)")
-    p6.add_argument("--Fmean", "-m", type=int, default= 500, 
+    Readsim_parser.add_argument("--Fmean", "-m", type=int, default= 500, 
                     help="average size of fragment length (only for short reads, default: 500 bp)")
-    p6.add_argument("--Fstd", "-s", type=int, default= 30,  
+    Readsim_parser.add_argument("--Fstd", "-s", type=int, default= 30,  
                     help="Fragment size standard deviation (only for short reads, default: 30 bp)")
     # random seed
-    p6.add_argument("--seed", "-D", type=int, default=None, 
+    Readsim_parser.add_argument("--seed", "-D", type=int, default=None, 
                     help="Random seed for reproducibility (default: None)")
-    p6.set_defaults(func=reads.run)
+    Readsim_parser.set_defaults(func=reads.run)
 
 
 
@@ -280,16 +280,14 @@ def main():
             parser.error("Nothing to simulate: set at least one of --nINS, --nDEL, --nEXC to a value > 0.")
     if args.command == "TErandom":
         if (args.nDEL > 0 or args.nEXC > 0) and not args.existingTEs:
-            p1.error("--existingTEs is required when --nDEL or --nEXC > 0.")
+            TErandom_parser.error("--existingTEs is required when --nDEL or --nEXC > 0.")
         if args.nEXC > 0 and not str(args.existingTEs).lower().endswith(".out"):
-            p1.error("--nEXC requires a RepeatMasker .out --existingTEs file (LTR fragment structure is needed to identify full-length elements).")
-    if args.command == "TEreal":
-        if args.nEXC > 0 and not str(args.existingTEs).lower().endswith(".out"):
-            p2.error("--nEXC requires a RepeatMasker .out --existingTEs file (LTR fragment structure is needed to identify full-length elements).")
+            TErandom_parser.error("--nEXC requires a RepeatMasker .out --existingTEs file (LTR fragment structure is needed to identify full-length elements).")
+    if args.command == "TEreal" and args.nEXC > 0 and not str(args.existingTEs).lower().endswith(".out"):
+            TEreal_parser.error("--nEXC requires a RepeatMasker .out --existingTEs file (LTR fragment structure is needed to identify full-length elements).")
     if args.command == "TEpan" and args.nEXC > 0:
-        p3.error("LTR-LTR recombination (--nEXC) is not yet supported for TEpan.")
-    if args.command == "Simulate":
-        if args.diverse_config and not args.diverse:
+        TEpan_parser.error("LTR-LTR recombination (--nEXC) is not yet supported for TEpan.")
+    if args.command == "Simulate" and args.diverse_config and not args.diverse:
             parser.error("--diverse_config requires --diverse to be set")
     args.func(args)
 
