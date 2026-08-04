@@ -4,7 +4,7 @@ import sys
 import os
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*Global interpreter lock.*")
-from . import build_pool, TE_real, simulate, compare_vcf, reads, TEpan
+from . import build_pool, TE_real, simulate, compare_vcf, evaluate, reads, TEpan
 from . import __version__
 
 class positive_int(int):
@@ -239,7 +239,47 @@ def main():
                          "alleles as the same when comparing genotypes (default: 50)")
     Compare_parser.set_defaults(func=compare_vcf.run)
 
-    # 6. Read simulation
+    # 6. Evaluate
+    Evaluate_parser = subparsers.add_parser("Evaluate",
+                               help="Score a prediction against every simulated event at once, "
+                                    "aggregated over all genomes")
+    # Input
+    Evaluate_parser.add_argument("--truth", "-T", type=str, required=True, help="Ground truth VCF file")
+    Evaluate_parser.add_argument("--pred", "-P", type=str, required=True, help="Predicted file to evaluate")
+    Evaluate_parser.add_argument("--predType", "-p", type=str, choices=["VCF", "BED"], default="VCF",
+                    help="Type of the predicted file (VCF or BED, default: VCF). A BED "
+                         "prediction carries no genotypes, so only detection and breakpoint "
+                         "accuracy are reported")
+    # Output
+    Evaluate_parser.add_argument("--outprefix", "-O", type=str, default="evaluate",
+                    help="Output prefix for the per-event JSON (default: evaluate)")
+    # Options
+    Evaluate_parser.add_argument("--sample_map", "-S", type=Existing_File_Path, default=None,
+                    help="Two-column file pairing truth and prediction samples "
+                         "(truth_sample<TAB>pred_sample). Default: pair samples by name")
+    Evaluate_parser.add_argument("--TEtype", "-e", type=str, default=None,
+                    help="TE family in truth VCF to consider, e.g. TY1-FULL (case-insensitive). "
+                         "This is the family, not the superfamily -- TY1, TY2, TY4 and TY5 are "
+                         "all LTR/Copia. Default: all families")
+    Evaluate_parser.add_argument("--INSonly", action="store_true", help="Only evaluate insertions in truth VCF")
+    Evaluate_parser.add_argument("--nHap", "-N", type=int, default=1,
+                    help="Number of haplotype columns per individual in the truth VCF; >1 "
+                         "merges them before pairing with the prediction (default: 1)")
+    Evaluate_parser.add_argument("--max_dist", "-M", type=int, default=100,
+                    help="Maximum allowed distance (bp) to consider a prediction and a "
+                         "simulated event the same locus (default: 100)")
+    Evaluate_parser.add_argument("--gt_len_tol", type=int, default=50,
+                    help="Maximum allowed difference (bp) in allele length to consider two "
+                         "alleles as the same (default: 50)")
+    Evaluate_parser.add_argument("--size_bins", type=int, action="append", default=None,
+                    help="Upper edges (bp) of the event-size strata; repeat the flag per edge "
+                         f"(default: {' '.join(map(str, evaluate.DEFAULT_SIZE_BINS))})")
+    Evaluate_parser.add_argument("--af_bins", type=ratio, action="append", default=None,
+                    help="Upper edges of the allele-frequency strata; repeat the flag per edge "
+                         f"(default: {' '.join(map(str, evaluate.DEFAULT_AF_BINS))})")
+    Evaluate_parser.set_defaults(func=evaluate.run)
+
+    # 7. Read simulation
     Readsim_parser = subparsers.add_parser("Readsim", 
                                help="generate short or long reads from the simulated genome")
     # general
@@ -295,6 +335,14 @@ def main():
         TEpan_parser.error("LTR-LTR recombination (--nEXC) is not yet supported for TEpan.")
     if args.command == "Simulate" and args.diverse_config and not args.diverse:
             parser.error("--diverse_config requires --diverse to be set")
+    if args.command == "Evaluate":
+        # Bin edges name the upper bound of each stratum, so out-of-order edges would
+        # silently produce strata no event can ever fall into.
+        for flag, edges in (("--size_bins", args.size_bins), ("--af_bins", args.af_bins)):
+            if edges is not None and list(edges) != sorted(set(edges)):
+                Evaluate_parser.error(f"{flag} must be given in strictly increasing order")
+        if args.nHap < 1:
+            Evaluate_parser.error("--nHap must be at least 1")
     args.func(args)
 
 

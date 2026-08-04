@@ -1,4 +1,5 @@
 import csv
+import re
 from collections import namedtuple
 
 import pysam
@@ -91,6 +92,31 @@ def genotype_agrees(tdescs, pdescs, tol):
                for a, b in zip(sorted(tdescs, key=key), sorted(pdescs, key=key)))
 
 
+# The MEI callset names an insertion after the locus it was lifted from, decorating the
+# element name on both sides: chr1-683234-len2747-SVA_F#Retroposon/SVA-polyA49-strand+.
+# Neither the source locus nor the polyA/strand annotation says anything about which family
+# the element belongs to, so both are stripped before the family and superfamily are read.
+_CALLSET_LEN_FIELD = re.compile(r"^len\d+-")
+_CALLSET_DECORATIONS = re.compile(r"(-polyA\d+)?(-strand[+-])?$")
+
+
+def _strip_source_locus(name):
+    '''
+    Drop a leading ``<chrom>-<pos>-`` (and the callset's ``len<N>-`` field) from an
+    insertion's name, leaving the element name behind.
+
+    The README requires known-insertion sequence IDs to follow ``CHR-POS-ID``, so the
+    position is the second dash-separated field and is all digits -- which is what tells a
+    decorated ID apart from a family name that merely contains dashes. TY1-FULL and
+    TY3_1p-FULL have no numeric second field and are returned untouched.
+    '''
+    fields = name.split("-")
+    if len(fields) >= 3 and fields[1].isdigit():
+        name = "-".join(fields[2:])
+        name = _CALLSET_LEN_FIELD.sub("", name, count=1)
+    return name
+
+
 def parse_te_ids(varID):
     '''
     Split a truth VCF variant ID into (family, superfamily).
@@ -100,19 +126,32 @@ def parse_te_ids(varID):
     The family name is the discriminating level, so that is what --TEtype matches.
 
     Two ID shapes occur:
-      INS      <family>#<class>/<superfamily>[_<modifications>]
-               e.g. TY1-FULL#LTR/Copia_15INDEL          -> (TY1-FULL, Copia)
+      INS      [<chrom>-<pos>-[len<N>-]]<family>#<class>/<superfamily>[_<modifications>]
+                                                                     [-polyA<N>][-strand<+|->]
+               e.g. TY1-FULL#LTR/Copia_15INDEL                        -> (TY1-FULL, Copia)
+                    chr21-211282-len320-AluY#SINE/Alu-polyA23-strand+ -> (AluY, Alu)
       DEL/EXC  <type>-<chrom>-<start>-<end>-...-<class>/<superfamily>-<family>
                e.g. EXC-chrXIV-611713-617630-335-LTR/Copia-TY1-FULL -> (TY1-FULL, Copia)
     Some DEL IDs are built without a trailing family name; those fall back to the
     superfamily so they stay filterable rather than silently dropping out.
+
+    A DEL/EXC ID separates its superfamily from its family with the same "-" that a
+    multi-word superfamily uses (DNA/hAT-Charlie), and nothing in the string says which of
+    the two it is; the first field is read as the superfamily, which is what the IDs
+    TE_real builds actually mean.
     '''
     if varID.startswith("DEL") or varID.startswith("EXC"):
         tail = varID.rsplit("/", 1)[-1] if "/" in varID else varID.rsplit("-", 1)[-1]
         superfamily, _, family = tail.partition("-")
         return (family or superfamily), superfamily
-    family = varID.split("#")[0]
-    superfamily = varID.split("/")[1].split("_")[0] if "/" in varID else ""
+    name, _, annotation = varID.partition("#")
+    family = _strip_source_locus(name)
+    if "/" in annotation:
+        # The superfamily may itself be hyphenated (DNA/hAT-Charlie), so only the callset's
+        # own trailing annotations are removed -- not everything after the first "-".
+        superfamily = _CALLSET_DECORATIONS.sub("", annotation.split("/", 1)[1]).split("_")[0]
+    else:
+        superfamily = ""
     return family, superfamily
 
 
@@ -197,6 +236,40 @@ def load_bed(bed_file):
             # genotype check falls back to comparing raw allele indices.
             variants.setdefault(chrom, []).append((start, gt, None))
     return variants
+
+def convert_to_ploidy(truth_file, nHap, out_file):
+    '''
+    Merge every nHap consecutive haplotype columns into one individual, e.g. the Hap1 and
+    Hap2 columns of a diploid simulation into a single Hap1_Hap2 column with a phased
+    genotype. Module-level so Evaluate can apply the same merge before pairing samples.
+    '''
+    with open(truth_file, 'r') as fin, open(out_file, 'w') as fout:
+        for line in fin:
+            if line.startswith('##'):
+                fout.write(line)
+            elif line.startswith('#CHROM'):
+                fields = line.strip().split('\t')
+                fixed_cols = fields[:9]
+                samples = fields[9:]
+                if len(samples) % nHap != 0:
+                    raise ValueError(f"Error: number of haplotypes ({len(samples)}) is not divisible by ploidy ({nHap})")
+                merged_samples = []
+                for i in range(0, len(samples), nHap):
+                    group = samples[i:i+nHap]
+                    merged_name = "_".join(group)
+                    merged_samples.append(merged_name)
+                fout.write('\t'.join(fixed_cols + merged_samples) + '\n')
+            else:
+                fields = line.strip().split('\t')
+                fixed_cols = fields[:9]
+                genotypes = fields[9:]
+                merged_gts = []
+                for i in range(0, len(genotypes), nHap):
+                    group = genotypes[i:i+nHap]
+                    merged_gt = '|'.join(group)
+                    merged_gts.append(merged_gt)
+                fout.write('\t'.join(fixed_cols + merged_gts) + '\n')
+
 
 def calculate_metrics(tp, fp, fn):
     '''
@@ -293,34 +366,7 @@ class CompareVCF:
             print(f"The {self.accuracy_label} accuracy for matched {tetype}: N/A")
     
     def convert_to_ploidy(self):
-        # self.nHap
-        # self.truth_file
-        with open(self.truth_file, 'r') as fin, open("polyhap.vcf", 'w') as fout:
-            for line in fin:
-                if line.startswith('##'):
-                    fout.write(line)
-                elif line.startswith('#CHROM'):
-                    fields = line.strip().split('\t')
-                    fixed_cols = fields[:9]
-                    samples = fields[9:]
-                    if len(samples) % self.nHap != 0:
-                        raise ValueError(f"Error: number of haplotypes ({len(samples)}) is not divisible by ploidy ({self.nHap})")
-                    merged_samples = []
-                    for i in range(0, len(samples), self.nHap):
-                        group = samples[i:i+self.nHap]
-                        merged_name = "_".join(group)
-                        merged_samples.append(merged_name)
-                    fout.write('\t'.join(fixed_cols + merged_samples) + '\n')
-                else:
-                    fields = line.strip().split('\t')
-                    fixed_cols = fields[:9]
-                    genotypes = fields[9:]
-                    merged_gts = []
-                    for i in range(0, len(genotypes), self.nHap):
-                        group = genotypes[i:i+self.nHap]
-                        merged_gt = '|'.join(group)
-                        merged_gts.append(merged_gt)
-                    fout.write('\t'.join(fixed_cols + merged_gts) + '\n')
+        convert_to_ploidy(self.truth_file, self.nHap, "polyhap.vcf")
 
     def calculate_confusion_counts(self, bench_pos, bench_gt, bench_desc,
                                    compare_pos, compare_gt, compare_desc, chrom):

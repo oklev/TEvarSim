@@ -155,6 +155,60 @@ def test_parse_te_ids_returns_family_not_superfamily():
     print("PASS test_parse_te_ids_returns_family_not_superfamily")
 
 
+def test_parse_te_ids_reads_the_family_out_of_a_callset_insertion_id():
+    """
+    The MEI callset names an insertion after the locus it was lifted from and annotates the
+    polyA tail and strand: chr21-211282-len320-AluY#SINE/Alu-polyA23-strand+. Neither part
+    says which family the element belongs to, so reading the ID literally made every
+    insertion its own family and left "--TEtype AluY" matching nothing.
+    """
+    assert compare_vcf.parse_te_ids(
+        "chr21-211282-len320-AluY#SINE/Alu-polyA23-strand+") == ("AluY", "Alu")
+    assert compare_vcf.parse_te_ids(
+        "chr1-683234-len2747-SVA_F#Retroposon/SVA-polyA49-strand-") == ("SVA_F", "SVA")
+    assert compare_vcf.parse_te_ids(
+        "chr1-4031386-len674-L1Ambig#LINE/L1-polyA52-strand-") == ("L1Ambig", "L1")
+    # the README's undecorated CHR-POS-ID form
+    assert compare_vcf.parse_te_ids("chr1-683234-AluSp#SINE/Alu") == ("AluSp", "Alu")
+    print("PASS test_parse_te_ids_reads_the_family_out_of_a_callset_insertion_id")
+
+
+def test_parse_te_ids_leaves_an_undecorated_family_name_alone():
+    """A family name that merely contains dashes is not a CHR-POS-ID: its second
+    dash-separated field is not a position."""
+    assert compare_vcf.parse_te_ids("TY1-FULL#LTR/Copia") == ("TY1-FULL", "Copia")
+    assert compare_vcf.parse_te_ids("TY3_1p-FULL#LTR/Gypsy") == ("TY3_1p-FULL", "Gypsy")
+    assert compare_vcf.parse_te_ids("AluY#SINE/Alu") == ("AluY", "Alu")
+    assert compare_vcf.parse_te_ids("L1HS#LINE/L1") == ("L1HS", "L1")
+    print("PASS test_parse_te_ids_leaves_an_undecorated_family_name_alone")
+
+
+def test_parse_te_ids_keeps_a_hyphenated_superfamily_whole():
+    """hAT-Charlie and TcMar-Tigger are single superfamilies; only the callset's own
+    trailing annotations are stripped, not everything after the first dash."""
+    assert compare_vcf.parse_te_ids("Charlie1#DNA/hAT-Charlie") == ("Charlie1", "hAT-Charlie")
+    assert compare_vcf.parse_te_ids(
+        "chr1-100-len300-Tigger1#DNA/TcMar-Tigger-polyA20-strand+") == ("Tigger1", "TcMar-Tigger")
+    print("PASS test_parse_te_ids_keeps_a_hyphenated_superfamily_whole")
+
+
+def test_callset_ids_collapse_into_one_filterable_family():
+    """Two AluY insertions lifted from different loci are one family, so --TEtype AluY
+    benchmarks both rather than raising on an unknown family."""
+    a = (1000, "chr21-211282-len320-AluY#SINE/Alu-polyA23-strand+", ANCHOR,
+         [ANCHOR + ELEMENT], "1")
+    b = (5000, "chr21-980614-len334-AluY#SINE/Alu-polyA37-strand-", ANCHOR,
+         [ANCHOR + ELEMENT], "1")
+    with tempfile.TemporaryDirectory() as d:
+        cmp = _compare(d, [a, b],
+                       [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT_JITTERED], "1"),
+                        (5000, "1.2", ANCHOR, [ANCHOR + ELEMENT_JITTERED], "1")],
+                       TEtype="AluY")
+        assert (cmp.nMatch, cmp.recall, cmp.precision) == (2, 1.0, 1.0), \
+            (cmp.nMatch, cmp.recall, cmp.precision)
+    print("PASS test_callset_ids_collapse_into_one_filterable_family")
+
+
 def test_family_filter_separates_same_superfamily_families():
     """TY1 and TY2 share the Copia superfamily; only the TY1 record must be compared."""
     ty2 = (2000, "TY2-FULL#LTR/Copia_3INDEL", ANCHOR, [ANCHOR + ELEMENT], "1")
@@ -260,6 +314,10 @@ if __name__ == "__main__":
     test_bed_prediction_falls_back_to_index_comparison()
     test_diploid_allele_multiset_is_order_insensitive()
     test_parse_te_ids_returns_family_not_superfamily()
+    test_parse_te_ids_reads_the_family_out_of_a_callset_insertion_id()
+    test_parse_te_ids_leaves_an_undecorated_family_name_alone()
+    test_parse_te_ids_keeps_a_hyphenated_superfamily_whole()
+    test_callset_ids_collapse_into_one_filterable_family()
     test_family_filter_separates_same_superfamily_families()
     test_family_filter_is_case_insensitive()
     test_unknown_family_raises_with_the_available_families()
