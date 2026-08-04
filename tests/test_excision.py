@@ -96,6 +96,34 @@ def test_excision_simulate_end_to_end():
                 assert seq == full_genome, f"genome {i} (GT=0) should keep the full element"
 
 
+def test_vcf_declares_and_writes_eventtype_per_alt():
+    """EVENTTYPE is Number=A: one event type per ALT allele, declared in the header."""
+    with tempfile.TemporaryDirectory() as d:
+        ref, pool, bed = _write_fixture(d)
+        out = os.path.join(d, "Sim")
+        args = _Args(ref=ref, pool=pool, bed=bed, outprefix=out, num=10,
+                     af_min=0.4, af_max=0.6, tsd_min=5, tsd_max=20,
+                     sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1)
+        simulate.Simulator(args)._run()
+
+        header, records = [], []
+        with open(out + ".vcf") as f:
+            for line in f:
+                (header if line.startswith("##") else
+                 records if not line.startswith("#CHROM") else []).append(line.rstrip("\n"))
+        assert any(l.startswith('##INFO=<ID=EVENTTYPE,Number=A,Type=String,') for l in header), \
+            "EVENTTYPE must be declared as Number=A"
+        assert records, "no records written"
+        for line in records:
+            fields = line.split("\t")
+            info = dict(f.partition("=")[::2] for f in fields[7].split(";"))
+            assert "EVENTTYPE" in info, f"record without EVENTTYPE: {fields[:5]}"
+            # a single simulated generation writes one event per record
+            assert info["EVENTTYPE"].split(",") == [info["TYPE"]], info
+            assert len(info["EVENTTYPE"].split(",")) == len(fields[4].split(",")), \
+                f"EVENTTYPE must have one value per ALT: {info['EVENTTYPE']} vs {fields[4][:40]}"
+
+
 def test_tereal_emits_excision_from_repeatmasker():
     """TEreal detects a full-length LTR element and emits an EXC BED line with the LTR length,
     and removes that locus from the deletion pool."""

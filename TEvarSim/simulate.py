@@ -265,6 +265,7 @@ class Simulator:
             for chr in self.CHR:
                 vcf.write(f"##contig=<ID={chr},length={self.CHR[chr]['len']}>\n")
             vcf.write('##INFO=<ID=TYPE,Number=1,Type=String,Description="Variant type (INS, DEL, or EXC for LTR-LTR recombination)">\n')
+            vcf.write('##INFO=<ID=EVENTTYPE,Number=A,Type=String,Description="Type of the event that produced each ALT allele (INS, DEL, or EXC), one per ALT allele. A single simulated generation only ever produces one event per record, but an allele may accumulate further events across generations, e.g. EVENTTYPE=INS,EXC for an element that was inserted and later excised to a solo LTR">\n')
             vcf.write('##INFO=<ID=STRAND,Number=1,Type=String,Description="Insertion strand (+ or -)">\n')
             vcf.write('##INFO=<ID=LTRLEN,Number=1,Type=Integer,Description="Length of the solo LTR left behind by LTR-LTR recombination (EXC only)">\n')
             vcf.write('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Net length change of the variant, negative for excision (EXC only)">\n')
@@ -297,8 +298,13 @@ class Simulator:
                     te_family, mods = self._parse_te_modification(var_id)
 
                     # INFO
+                    # EVENTTYPE is Number=A, so it carries one value per ALT allele. Every
+                    # record written here is single-ALT (one event per site per generation),
+                    # so it gets exactly one value; downstream tools that merge an element's
+                    # later history onto the same record extend the list allele by allele.
                     info_parts = [
                         f"TYPE={event_type}",
+                        f"EVENTTYPE={event_type}",
                         f"STRAND={strand}",
                         f"TSD={tsd}",
                         f"TEFAMILY={te_family}"
