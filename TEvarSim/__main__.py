@@ -226,11 +226,17 @@ def main():
     # Options
     Compare_parser.add_argument("--truthID", "-I", type=str, required=True, help="Sample ID in the truth VCF")
     Compare_parser.add_argument("--predID", "-J", type=str, required=True, help="Sample ID in the predicted VCF")
-    Compare_parser.add_argument("--TEtype", "-e", type=str, default=None, help="TE type in truth VCF to consider in the comparison")
+    Compare_parser.add_argument("--TEtype", "-e", type=str, default=None,
+                    help="TE family in truth VCF to consider in the comparison, e.g. TY1-FULL "
+                         "(case-insensitive). This is the family, not the superfamily -- TY1, "
+                         "TY2, TY4 and TY5 are all LTR/Copia. Default: all families")
     Compare_parser.add_argument("--INSonly", action="store_true",  help="Only compare insertions in truth VCF")
     Compare_parser.add_argument("--nHap", "-N", type=int, default=2,  help="Number of haplotypes in the genome (default: 2)")
-    Compare_parser.add_argument("--max_dist", "-M", type=int, default=100, 
+    Compare_parser.add_argument("--max_dist", "-M", type=int, default=100,
                     help="Maximum allowed distance (bp) to consider two variants as matching")
+    Compare_parser.add_argument("--gt_len_tol", type=int, default=50,
+                    help="Maximum allowed difference (bp) in allele length to consider two "
+                         "alleles as the same when comparing genotypes (default: 50)")
     Compare_parser.set_defaults(func=compare_vcf.run)
 
     # 6. Read simulation
