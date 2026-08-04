@@ -57,6 +57,24 @@ def alleles_agree(t, p, tol):
     return abs(t.size - p.size) <= tol
 
 
+def all_haploid(*variant_sets):
+    '''
+    Do all the loaded variants carry a single allele?
+
+    Read off the genotypes themselves rather than --nHap, so the answer follows the data:
+    convert_to_ploidy merges haplotype columns before anything is loaded, and a file can
+    disagree with the ploidy it was invoked with. With one allele per sample there is no
+    genotype to get right beyond which haplotype is carried, so the accuracy that is
+    reported is a haplotype accuracy and says so.
+    '''
+    for variants in variant_sets:
+        for records in variants.values():
+            for _pos, gt, _descs in records:
+                if len(gt) != 1:
+                    return False
+    return True
+
+
 def genotype_agrees(tdescs, pdescs, tol):
     '''
     Compare two resolved genotypes as unordered allele multisets. Falls back to raw
@@ -268,10 +286,11 @@ class CompareVCF:
         print(f"True Positive: {tp}, False Positive: {fp}, False negative: {fn}")
         print(f"Recall: {self.recall:.4f}, Precision: {self.precision:.4f}, F1: {self.F1:.4f}")
         self.gt_accuracy = 1 - gtDiff/self.nMatch if self.nMatch else None
+        self.accuracy_label = "haplotype" if all_haploid(bench_var, pred_var) else "genotype"
         if self.nMatch:
-            print(f"The genotype accuracy for matched {tetype}: {self.gt_accuracy}")
+            print(f"The {self.accuracy_label} accuracy for matched {tetype}: {self.gt_accuracy}")
         else:
-            print(f"The genotype accuracy for matched {tetype}: N/A")
+            print(f"The {self.accuracy_label} accuracy for matched {tetype}: N/A")
     
     def convert_to_ploidy(self):
         # self.nHap

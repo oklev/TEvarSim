@@ -198,6 +198,45 @@ def test_unknown_family_raises_with_the_available_families():
     print("PASS test_unknown_family_raises_with_the_available_families")
 
 
+def test_haploid_comparison_is_reported_as_haplotype_accuracy():
+    """With one allele per sample there is no genotype beyond which haplotype is carried."""
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as d:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cmp = _compare(d, [TRUTH_INS],
+                           [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT_JITTERED], "1")])
+        assert cmp.accuracy_label == "haplotype", cmp.accuracy_label
+        assert "haplotype accuracy" in buf.getvalue(), buf.getvalue()
+        assert "genotype accuracy" not in buf.getvalue()
+    print("PASS test_haploid_comparison_is_reported_as_haplotype_accuracy")
+
+
+def test_diploid_comparison_is_still_reported_as_genotype_accuracy():
+    import contextlib
+    import io
+    diploid_truth = (1000, "TY1-FULL#LTR/Copia_1INDEL", ANCHOR, [ANCHOR + ELEMENT], "1/1")
+    with tempfile.TemporaryDirectory() as d:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cmp = _compare(d, [diploid_truth],
+                           [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT_JITTERED], "1/1")])
+        assert cmp.accuracy_label == "genotype", cmp.accuracy_label
+        assert "genotype accuracy" in buf.getvalue(), buf.getvalue()
+    print("PASS test_diploid_comparison_is_still_reported_as_genotype_accuracy")
+
+
+def test_label_follows_the_data_not_the_nHap_flag():
+    """A diploid file compared with --nHap 1 is still a genotype comparison."""
+    diploid = (1000, "TY1-FULL#LTR/Copia_1INDEL", ANCHOR, [ANCHOR + ELEMENT], "0/1")
+    with tempfile.TemporaryDirectory() as d:
+        cmp = _compare(d, [diploid],
+                       [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT_JITTERED], "0/1")], nHap=1)
+        assert cmp.accuracy_label == "genotype", cmp.accuracy_label
+    print("PASS test_label_follows_the_data_not_the_nHap_flag")
+
+
 def test_match_file_is_parseable_and_flags_mismatches():
     """The match file must be real CSV with unix line endings so awk/cut work on it."""
     import csv as _csv
@@ -224,4 +263,7 @@ if __name__ == "__main__":
     test_family_filter_separates_same_superfamily_families()
     test_family_filter_is_case_insensitive()
     test_unknown_family_raises_with_the_available_families()
+    test_haploid_comparison_is_reported_as_haplotype_accuracy()
+    test_diploid_comparison_is_still_reported_as_genotype_accuracy()
+    test_label_follows_the_data_not_the_nHap_flag()
     test_match_file_is_parseable_and_flags_mismatches()
