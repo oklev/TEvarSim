@@ -104,7 +104,7 @@ def test_every_event_is_scored_without_naming_a_genome():
                     [(1002, "1.1", ANCHOR, [ANCHOR + ELEMENT_JITTERED], ".", ["1", "1", "0"]),
                      (5000, "1.2", ANCHOR, [ANCHOR + ELEMENT], ".", ["0", "1", "1"])])
         overall = ev.summary["overall"]
-        assert overall["n_events"] == 3, overall
+        assert overall["n_loci"] == 3, overall
         assert overall["n_detected"] == 2, overall
         assert overall["detection_rate"] == round(2 / 3, 4), overall
         # the event nobody called contributes its carrier to FN, not to a genotype error
@@ -120,7 +120,7 @@ def test_breakpoint_and_length_error_are_measured_per_event():
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"],
                     [(1007, "1.1", ANCHOR, [ANCHOR + ELEMENT_JITTERED], ".", ["1"])])
-        match = ev.events[0]["match"]
+        match = ev.loci[0]["match"]
         assert match["pos_offset"] == 7, match
         assert match["length_error"] == len(ELEMENT_JITTERED) - len(ELEMENT), match
         assert match["allele_match"] is True, match
@@ -180,7 +180,7 @@ def test_one_prediction_cannot_cover_two_stacked_events():
                     [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"])])
         assert ev.summary["overall"]["n_detected"] == 1, ev.summary["overall"]
         # the prediction is claimed by the event it sits on, not by both
-        detected = [e for e in ev.events if e["detected"]]
+        detected = [e for e in ev.loci if e["detected"]]
         assert detected[0]["pos"] == 1000, detected[0]
     print("PASS test_one_prediction_cannot_cover_two_stacked_events")
 
@@ -191,7 +191,7 @@ def test_allele_agreement_wins_over_proximity_when_pairing():
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"],
                     [(1001, "solo", ANCHOR, [ANCHOR + SOLO_LTR], ".", ["1"]),
                      (1040, "elem", ANCHOR, [ANCHOR + ELEMENT_JITTERED], ".", ["1"])])
-        match = ev.events[0]["match"]
+        match = ev.loci[0]["match"]
         assert match["id"] == "elem", match
         assert match["allele_match"] is True, match
     print("PASS test_allele_agreement_wins_over_proximity_when_pairing")
@@ -229,8 +229,8 @@ def test_a_genome_called_as_a_carrier_that_is_not_one_is_a_carrier_fp():
                     [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1", "1"])])
         carriers = ev.summary["overall"]["carriers"]
         assert (carriers["tp"], carriers["fp"], carriers["fn"]) == (1, 1, 0), carriers
-        assert ev.events[0]["carriers"]["predicted"] == ["S0", "S1"], ev.events[0]["carriers"]
-        assert ev.events[0]["carriers"]["truth"] == ["S0"], ev.events[0]["carriers"]
+        assert ev.loci[0]["carriers"]["predicted"] == ["S0", "S1"], ev.loci[0]["carriers"]
+        assert ev.loci[0]["carriers"]["truth"] == ["S0"], ev.loci[0]["carriers"]
     print("PASS test_a_genome_called_as_a_carrier_that_is_not_one_is_a_carrier_fp")
 
 
@@ -285,7 +285,7 @@ def test_samples_are_paired_by_name():
         carriers = ev.summary["overall"]["carriers"]
         assert (carriers["tp"], carriers["fp"], carriers["fn"]) == (1, 0, 0), carriers
         # allele frequency still comes from every simulated genome, paired or not
-        assert ev.events[0]["allele_frequency"] == round(2 / 3, 4), ev.events[0]
+        assert ev.loci[0]["allele_frequency"] == round(2 / 3, 4), ev.loci[0]
     print("PASS test_samples_are_paired_by_name")
 
 
@@ -369,15 +369,15 @@ def test_stratification_splits_events_by_type_family_size_and_frequency():
                       ["1", "0", "0", "0"])])
         summary = ev.summary
         assert set(summary["by_event_type"]) == {"INS", "EXC"}, list(summary["by_event_type"])
-        assert summary["by_event_type"]["INS"]["n_events"] == 2, summary["by_event_type"]
+        assert summary["by_event_type"]["INS"]["n_loci"] == 2, summary["by_event_type"]
         assert set(summary["by_family"]) == {"TY1-FULL", "TY2-FULL"}, list(summary["by_family"])
         # the excision shortens the locus by ~5.6 kb, the insertions lengthen it by ~5.9 kb
         assert set(summary["by_size"]) == {"5kb-10kb"}, list(summary["by_size"])
-        assert summary["by_size"]["5kb-10kb"]["n_events"] == 3, summary["by_size"]
-        assert summary["by_allele_frequency"]["0.75-1"]["n_events"] == 1, \
+        assert summary["by_size"]["5kb-10kb"]["n_loci"] == 3, summary["by_size"]
+        assert summary["by_allele_frequency"]["0.75-1"]["n_loci"] == 1, \
             summary["by_allele_frequency"]
-        assert summary["by_carrier_count"]["1"]["n_events"] == 2, summary["by_carrier_count"]
-        assert summary["by_carrier_count"]["4"]["n_events"] == 1, summary["by_carrier_count"]
+        assert summary["by_carrier_count"]["1"]["n_loci"] == 2, summary["by_carrier_count"]
+        assert summary["by_carrier_count"]["4"]["n_loci"] == 1, summary["by_carrier_count"]
     print("PASS test_stratification_splits_events_by_type_family_size_and_frequency")
 
 
@@ -398,17 +398,17 @@ def test_an_excised_insertion_counts_under_both_ins_and_exc():
         ev = _quiet(_evaluate, d, ["S0"],
                     [_ins(1000, ["1"]), _MERGED + (["2"],), _STANDALONE_EXC + (["1"],)],
                     ["S0"], [])
-        merged = [e for e in ev.events if e["pos"] == 3000][0]
+        merged = [e for e in ev.loci if e["pos"] == 3000][0]
         assert merged["type"] == "INS", merged["type"]
         assert merged["event_classes"] == ["EXC", "INS"], merged["event_classes"]
         by_type = ev.summary["by_event_type"]
         # 3 events, but 4 rows-worth: the merged one is in both
-        assert by_type["INS"]["n_events"] == 2, by_type["INS"]
-        assert by_type["EXC"]["n_events"] == 2, by_type["EXC"]
-        assert sum(s["n_events"] for s in by_type.values()) == 4, by_type
-        assert ev.summary["overall"]["n_events"] == 3, ev.summary["overall"]
+        assert by_type["INS"]["n_loci"] == 2, by_type["INS"]
+        assert by_type["EXC"]["n_loci"] == 2, by_type["EXC"]
+        assert sum(s["n_loci"] for s in by_type.values()) == 4, by_type
+        assert ev.summary["overall"]["n_loci"] == 3, ev.summary["overall"]
         # the history table still counts each record once
-        assert sum(s["n_events"] for s in ev.summary["by_event_history"].values()) == 3
+        assert sum(s["n_loci"] for s in ev.summary["by_event_history"].values()) == 3
     print("PASS test_an_excised_insertion_counts_under_both_ins_and_exc")
 
 
@@ -419,7 +419,7 @@ def test_an_event_is_only_counted_where_its_allele_has_the_right_shape():
            [ANCHOR + ELEMENT, ANCHOR + STACKED], "TYPE=INS;EVENTTYPE=INS,EXC", ["2"])
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [bad], ["S0"], [])
-        event = ev.events[0]
+        event = ev.loci[0]
         assert event["event_classes"] == ["INS"], event["event_classes"]
         assert event["unsupported_events"], event
         assert "EXC allele 2" in event["unsupported_events"][0], event["unsupported_events"]
@@ -450,8 +450,8 @@ def test_a_length_change_within_tolerance_counts_as_neither():
             "TYPE=INS;EVENTTYPE=INS", ["1"])
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [tiny], ["S0"], [], gt_len_tol=50)
-        assert ev.events[0]["event_classes"] == [], ev.events[0]["event_classes"]
-        assert ev.events[0]["unsupported_events"], ev.events[0]
+        assert ev.loci[0]["event_classes"] == [], ev.loci[0]["event_classes"]
+        assert ev.loci[0]["unsupported_events"], ev.loci[0]
         # it still appears, under a label that says it demonstrated nothing
         assert list(ev.summary["by_event_type"]) == ["?"], list(ev.summary["by_event_type"])
     print("PASS test_a_length_change_within_tolerance_counts_as_neither")
@@ -502,16 +502,16 @@ def test_event_history_separates_an_excised_insertion_from_a_plain_one():
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0", "S1"], [history, _ins(9000, ["1", "1"])],
                     ["S0", "S1"], [])
-        assert ev.events[0]["history"] == "INS,EXC", ev.events[0]
-        assert ev.events[1]["history"] == "INS", ev.events[1]
+        assert ev.loci[0]["history"] == "INS,EXC", ev.loci[0]
+        assert ev.loci[1]["history"] == "INS", ev.loci[1]
         assert set(ev.summary["by_event_history"]) == {"INS", "INS,EXC"}, \
             list(ev.summary["by_event_history"])
         # INFO/TYPE reads INS for both records, but the excision allele on the first is
         # still counted as an excision rather than being absorbed into the INS row
         assert set(ev.summary["by_event_type"]) == {"INS", "EXC"}, \
             list(ev.summary["by_event_type"])
-        assert ev.summary["by_event_type"]["INS"]["n_events"] == 2, ev.summary["by_event_type"]
-        assert ev.summary["by_event_type"]["EXC"]["n_events"] == 1, ev.summary["by_event_type"]
+        assert ev.summary["by_event_type"]["INS"]["n_loci"] == 2, ev.summary["by_event_type"]
+        assert ev.summary["by_event_type"]["EXC"]["n_loci"] == 1, ev.summary["by_event_type"]
     print("PASS test_event_history_separates_an_excised_insertion_from_a_plain_one")
 
 
@@ -521,7 +521,7 @@ def test_a_nested_element_is_labelled_as_such():
               "TYPE=INS;EVENTTYPE=INS,INS;MEPRESENT=0,1", ["1", "2"])
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0", "S1"], [nested], ["S0", "S1"], [])
-        assert ev.events[0]["history"] == "nested INS", ev.events[0]
+        assert ev.loci[0]["history"] == "nested INS", ev.loci[0]
     print("PASS test_a_nested_element_is_labelled_as_such")
 
 
@@ -532,11 +532,11 @@ def test_insonly_and_tetype_filter_the_events_that_are_scored():
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"]), exc, ty2], ["S0"], [],
                     INSonly=True)
-        assert ev.summary["overall"]["n_events"] == 2, ev.summary["overall"]
+        assert ev.summary["overall"]["n_loci"] == 2, ev.summary["overall"]
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"]), exc, ty2], ["S0"], [],
                     TEtype="ty1-full")
-        assert ev.summary["overall"]["n_events"] == 2, ev.summary["overall"]
+        assert ev.summary["overall"]["n_loci"] == 2, ev.summary["overall"]
         assert list(ev.summary["by_family"]) == ["TY1-FULL"], list(ev.summary["by_family"])
     print("PASS test_insonly_and_tetype_filter_the_events_that_are_scored")
 
@@ -562,12 +562,12 @@ def test_json_holds_one_object_per_event_and_is_reloadable():
                samples, [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1", "0"])])
         with open(os.path.join(d, "out.json")) as f:
             report = json.load(f)
-        assert set(report) == {"meta", "summary", "events"}, list(report)
-        assert len(report["events"]) == 2, report["events"]
-        first = report["events"][0]
+        assert set(report) == {"meta", "summary", "loci"}, list(report)
+        assert len(report["loci"]) == 2, report["loci"]
+        first = report["loci"][0]
         assert first["pos"] == 1000 and first["detected"] is True, first
         assert first["carriers"]["truth"] == ["S0"], first["carriers"]
-        assert report["events"][1]["match"] is None, report["events"][1]
+        assert report["loci"][1]["match"] is None, report["loci"][1]
         assert report["meta"]["pairing"] == "matching names", report["meta"]
     print("PASS test_json_holds_one_object_per_event_and_is_reloadable")
 
@@ -582,7 +582,7 @@ def test_the_printed_report_names_the_headline_numbers():
             _evaluate(d, samples, [_ins(1000, ["1", "1"])], samples,
                       [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1", "1"])])
         out = buf.getvalue()
-        for expected in ("Event detection", "recovered", "By event type", "By TE family",
+        for expected in ("Locus detection", "recovered", "By event type", "By TE family",
                          "By event size", "By allele frequency", "haplotype concordance"):
             assert expected in out, (expected, out)
     print("PASS test_the_printed_report_names_the_headline_numbers")
@@ -602,8 +602,8 @@ def test_one_json_is_written_per_locus_either_side_knows_about():
         for name in written:
             with open(os.path.join(ev.locus_dir, name)) as f:
                 kinds[name] = json.load(f)["kind"]
-        assert kinds["chrT_1000.json"] == "simulated_event", kinds
-        assert kinds["chrT_9000.json"] == "simulated_event", kinds
+        assert kinds["chrT_1000.json"] == "simulated_locus", kinds
+        assert kinds["chrT_9000.json"] == "simulated_locus", kinds
         assert kinds["chrT_40000.json"] == "unmatched_prediction", kinds
     print("PASS test_one_json_is_written_per_locus_either_side_knows_about")
 
@@ -614,11 +614,11 @@ def test_a_locus_file_is_its_summary_entry_plus_run_context():
                     [(1003, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"])])
         with open(os.path.join(d, "out.json")) as f:
             summary = json.load(f)
-        entry = summary["events"][0]
+        entry = summary["loci"][0]
         assert entry["locus_file"] == "out_loci/chrT_1000.json", entry["locus_file"]
         with open(os.path.join(d, entry["locus_file"])) as f:
             locus = json.load(f)
-        assert locus.pop("kind") == "simulated_event"
+        assert locus.pop("kind") == "simulated_locus"
         run = locus.pop("run")
         assert locus == entry, (locus, entry)
         # the file stands alone: it says which run produced it and where the rest lives
@@ -641,7 +641,7 @@ def test_stacked_events_at_one_position_get_distinct_files():
     print("PASS test_stacked_events_at_one_position_get_distinct_files")
 
 
-def test_an_unmatched_prediction_records_its_nearest_simulated_event():
+def test_an_unmatched_prediction_records_its_nearest_simulated_locus():
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"],
                     [(1400, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"])])
@@ -649,11 +649,11 @@ def test_an_unmatched_prediction_records_its_nearest_simulated_event():
             locus = json.load(f)
         assert locus["kind"] == "unmatched_prediction", locus
         assert locus["id"] == "1.1" and locus["carriers"]["predicted"] == ["S0"], locus
-        near = locus["nearest_simulated_event"]
+        near = locus["nearest_simulated_locus"]
         # 400 bp away: outside --max_dist, but plainly a near miss rather than a novel call
         assert near["distance_bp"] == 400 and near["pos"] == 1000, near
         assert near["detected"] is False, near
-    print("PASS test_an_unmatched_prediction_records_its_nearest_simulated_event")
+    print("PASS test_an_unmatched_prediction_records_its_nearest_simulated_locus")
 
 
 def test_rerunning_clears_locus_files_left_by_the_previous_run():
@@ -682,10 +682,10 @@ def test_a_bed_prediction_scores_detection_only():
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], [],
                     [("chrT", 1003, 1004, "call1")], predType="BED")
         assert ev.summary["overall"]["n_detected"] == 1, ev.summary["overall"]
-        assert ev.events[0]["match"]["pos_offset"] == 3, ev.events[0]["match"]
+        assert ev.loci[0]["match"]["pos_offset"] == 3, ev.loci[0]["match"]
         # no allele sequences and no samples in a BED: nothing else is claimed
-        assert ev.events[0]["match"]["allele_match"] is None, ev.events[0]["match"]
-        assert ev.events[0]["match"]["length_error"] is None, ev.events[0]["match"]
+        assert ev.loci[0]["match"]["allele_match"] is None, ev.loci[0]["match"]
+        assert ev.loci[0]["match"]["length_error"] is None, ev.loci[0]["match"]
         assert ev.meta["sample_pairs"] == [], ev.meta["sample_pairs"]
     print("PASS test_a_bed_prediction_scores_detection_only")
 
@@ -740,7 +740,7 @@ if __name__ == "__main__":
     test_one_json_is_written_per_locus_either_side_knows_about()
     test_a_locus_file_is_its_summary_entry_plus_run_context()
     test_stacked_events_at_one_position_get_distinct_files()
-    test_an_unmatched_prediction_records_its_nearest_simulated_event()
+    test_an_unmatched_prediction_records_its_nearest_simulated_locus()
     test_rerunning_clears_locus_files_left_by_the_previous_run()
     test_a_contig_name_unsafe_in_a_filename_is_sanitised()
     test_a_bed_prediction_scores_detection_only()

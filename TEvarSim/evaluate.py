@@ -1,24 +1,30 @@
 '''
-``tevarsim Evaluate`` -- score a prediction against every simulated event at once.
+``tevarsim Evaluate`` -- score a prediction against every simulated locus at once.
 
 ``Compare`` answers "how well was *this* genome called?". It takes one truth sample and one
 prediction sample and reports site-level precision/recall plus a genotype accuracy for that
 pair, so benchmarking a whole simulation means looping it over every genome and stitching
 the per-genome outputs back together by hand.
 
-``Evaluate`` turns the question around. The unit of analysis is the simulated *event*, not
-the genome: each record in the truth VCF is one event, and each event is scored once,
-against all of the simulated genomes at the same time. Truth and prediction samples are
-paired by name (the pairing ``Compare`` is normally driven with, ``-I $sample -J $sample``),
-so no genome has to be named on the command line. Each event then carries
+``Evaluate`` turns the question around. The unit of analysis is the simulated *locus*, not
+the genome: each record in the truth VCF is one locus -- one mobile element and everything
+that happened to it -- and each is scored once, against all of the simulated genomes at the
+same time. Truth and prediction samples are paired by name (the pairing ``Compare`` is
+normally driven with, ``-I $sample -J $sample``), so no genome has to be named on the
+command line. Each locus then carries
 
   * whether the prediction recovered the locus at all, and how far off its breakpoint and
     allele length were,
   * which genomes were called as carriers versus which genomes actually carry it, and
   * whether the genotype of each paired genome agrees by allele content,
 
-and those per-event records are aggregated into overall metrics plus breakdowns by event
-type, TE family, event size and allele frequency.
+and those per-locus records are aggregated into overall metrics plus breakdowns by event
+type, TE family, element size and allele frequency.
+
+A locus is not the same thing as an event: an element inserted in one generation and
+excised in a later one is one locus carrying two events. Every count here is of loci
+except the event-type breakdown, where a locus is counted under each event class in its
+history -- so those rows total the events, and total more than the loci.
 
 Allele comparison, family parsing and the confusion-count arithmetic are shared with
 ``Compare`` so the two subcommands agree on what "the same allele" means.
@@ -49,8 +55,13 @@ DEFAULT_AF_BINS = (0.1, 0.25, 0.5, 0.75)
 MAX_GENOMES_FOR_CARRIER_TABLE = 20
 
 
-class Event:
-    '''One simulated event: a single record of the truth VCF, with all of its genomes.'''
+class Locus:
+    '''
+    One simulated locus: a single record of the truth VCF, with all of its genomes.
+
+    That is one mobile element and its whole history -- an insertion, and any excision that
+    later reduced it to a solo LTR -- so a locus may carry more than one event.
+    '''
 
     def __init__(self, chrom, pos, varID, ref, alts, info, family, superfamily,
                  gts, descs, alt_descs):
@@ -65,7 +76,7 @@ class Event:
         self.gts = gts              # truth sample -> GT tuple
         self.descs = descs          # truth sample -> resolved Allele tuple (or None)
         self.alt_descs = alt_descs  # every non-reference allele of the record
-        self.match = None           # the prediction record paired with this event
+        self.match = None           # the prediction record paired with this locus
 
 
 class PredRecord:
@@ -276,7 +287,7 @@ def load_truth_events(vcf_file, INSonly, TEtype):
             gts[sample] = gt
             descs[sample] = resolve_alleles(record.ref, record.alts, gt)
         alt_descs = alt_descriptors(record.ref, record.alts)
-        event = Event(record.chrom, record.pos, varID, record.ref, tuple(record.alts or ()),
+        event = Locus(record.chrom, record.pos, varID, record.ref, tuple(record.alts or ()),
                       info, family, superfamily, gts, descs, alt_descs)
         event.type = etype
         event.history = event_history(record, info)
@@ -596,7 +607,7 @@ def aggregate(scored_events):
     errors = [e["match"]["length_error"] for e in detected
               if e["match"]["length_error"] is not None]
     return OrderedDict([
-        ("n_events", n),
+        ("n_loci", n),
         ("n_detected", len(detected)),
         ("detection_rate", round(len(detected) / n, 4) if n else None),
         ("n_allele_concordant", allele_ok),
@@ -713,7 +724,7 @@ def _stratum_rows(strata):
     for label, stats in strata.items():
         rows.append([
             label,
-            stats["n_events"],
+            stats["n_loci"],
             stats["n_detected"],
             _pct(stats["detection_rate"]),
             _pct(stats["allele_concordance_rate"]),
@@ -725,8 +736,14 @@ def _stratum_rows(strata):
     return rows
 
 
-STRATUM_HEADERS = ["stratum", "events", "found", "detection",
-                   "allele ok", "mean off", "mean len err", "carrier F1", "genotype"]
+def stratum_headers(unit="loci"):
+    '''
+    Column headings for a breakdown table. The first count is labelled by what the rows
+    actually hold: every table counts loci except the event-type one, where a locus is
+    counted under each event class in its history and the column therefore counts events.
+    '''
+    return ["stratum", unit, "found", "detection",
+            "allele ok", "mean off", "mean len err", "carrier F1", "genotype"]
 
 
 def format_report(summary, meta):
@@ -735,7 +752,7 @@ def format_report(summary, meta):
     lines.append("")
     lines.append("tevarsim Evaluate")
     lines.append(f"  truth : {meta['truth']}")
-    lines.append(f"          {meta['n_events']} simulated events over "
+    lines.append(f"          {meta['n_loci']} simulated loci over "
                  f"{meta['n_truth_samples']} genomes")
     lines.append(f"  pred  : {meta['pred']}")
     lines.append(f"          {meta['n_pred_records']} records over "
@@ -757,20 +774,20 @@ def format_report(summary, meta):
 
     overall = summary["overall"]
     lines.append("")
-    lines.append(f"Event detection ({overall['n_events']} simulated events)")
-    lines.append(f"  recovered            : {overall['n_detected']} / {overall['n_events']}"
+    lines.append(f"Locus detection ({overall['n_loci']} simulated loci)")
+    lines.append(f"  recovered            : {overall['n_detected']} / {overall['n_loci']}"
                  f"  ({_pct(overall['detection_rate'])})")
     lines.append(f"  allele concordant    : {overall['n_allele_concordant']} of the "
                  f"recovered  ({_pct(overall['allele_concordance_rate'])})")
     lines.append(f"  unmatched predictions: {summary['predictions']['unmatched']} of "
                  f"{summary['predictions']['total']}")
-    lines.append(f"  event precision      : {_pct(summary['predictions']['precision'])}"
-                 "   (prediction records matching a simulated event)")
+    lines.append(f"  locus precision      : {_pct(summary['predictions']['precision'])}"
+                 "   (prediction records matching a simulated locus)")
 
     offsets = overall["breakpoint_offset_bp"]
     errors = overall["allele_length_error_bp"]
     lines.append("")
-    lines.append("Accuracy of the recovered events")
+    lines.append("Accuracy of the recovered loci")
     lines.append(f"  breakpoint offset   : mean {_signed(offsets['mean'])} bp, "
                  f"SD {_num(offsets['sd'])} bp   (n={offsets['n']})")
     lines.append(f"  allele length error : mean {_signed(errors['mean'])} bp, "
@@ -795,7 +812,7 @@ def format_report(summary, meta):
     unsupported = summary.get("unsupported_events") or []
     if unsupported:
         lines.append("")
-        lines.append(f"Events declaring a type no allele bears out ({len(unsupported)})")
+        lines.append(f"Loci declaring an event no allele bears out ({len(unsupported)})")
         lines.append("  not counted under that type; the allele does not change length the "
                      "way the event would")
         for item in unsupported[:5]:
@@ -816,9 +833,10 @@ def format_report(summary, meta):
         lines.append("")
         lines.append(title)
         if key == "by_event_type":
-            lines.append("  an event counts under every class in its history, so the rows "
-                         "do not sum to the event total")
-        lines.extend(_table(STRATUM_HEADERS, _stratum_rows(strata)))
+            lines.append("  a locus counts under each event class in its history, so "
+                         "these rows count events, not loci")
+        unit = "events" if key == "by_event_type" else "loci"
+        lines.extend(_table(stratum_headers(unit), _stratum_rows(strata)))
     lines.append("")
     return "\n".join(lines)
 
@@ -917,7 +935,7 @@ class Evaluator:
             ("truth", self.truth_file),
             ("pred", self.pred_file),
             ("predType", self.predType),
-            ("n_events", len(events)),
+            ("n_loci", len(events)),
             ("n_truth_samples", len(truth_samples)),
             ("n_pred_records", len(records)),
             ("n_pred_samples", len(pred_samples)),
@@ -959,7 +977,7 @@ class Evaluator:
 
         with open(out_path, "w") as fo:
             json.dump(OrderedDict([("meta", meta), ("summary", summary),
-                                   ("events", scored)]), fo, indent=2)
+                                   ("loci", scored)]), fo, indent=2)
             fo.write("\n")
         # Flush first: the report goes to a block-buffered stdout when it is piped, and the
         # unbuffered stderr note would otherwise land above a report it comes after.
@@ -973,7 +991,7 @@ class Evaluator:
 
         self.meta = meta
         self.summary = summary
-        self.events = scored
+        self.loci = scored
         self.locus_dir = locus_dir
         self.locus_files = names
         return self
@@ -1015,7 +1033,7 @@ def locus_filenames(scored, unmatched):
 
 def nearest_event(record, scored):
     '''
-    The closest simulated event on this contig to a prediction that matched none of them,
+    The closest simulated locus on this contig to a prediction that matched none of them,
     which is what separates a call landing just outside --max_dist from one with nothing
     simulated anywhere near it.
     '''
@@ -1044,7 +1062,7 @@ def unmatched_payload(record, scored):
         ("id", record.id),
         ("allele_bp", event_size(record.alt_descs)),
         ("carriers", OrderedDict([("predicted", carriers)])),
-        ("nearest_simulated_event", nearest_event(record, scored)),
+        ("nearest_simulated_locus", nearest_event(record, scored)),
     ])
 
 
@@ -1066,7 +1084,7 @@ def write_locus_files(directory, run, scored, unmatched, names):
             os.remove(path)
             removed += 1
 
-    payloads = [(name, "simulated_event", event)
+    payloads = [(name, "simulated_locus", event)
                 for name, event in zip(names, scored)]
     payloads += [(name, "unmatched_prediction", unmatched_payload(record, scored))
                  for name, record in zip(names[len(scored):], unmatched)]
