@@ -474,6 +474,95 @@ def test_the_printed_report_names_the_headline_numbers():
     print("PASS test_the_printed_report_names_the_headline_numbers")
 
 
+def test_one_json_is_written_per_locus_either_side_knows_about():
+    samples = ["S0", "S1"]
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, samples,
+                    [_ins(1000, ["1", "0"]), _ins(9000, ["0", "1"])], samples,
+                    [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1", "0"]),
+                     (40000, "9.9", ANCHOR, [ANCHOR + ELEMENT], ".", ["1", "1"])])
+        written = sorted(os.listdir(ev.locus_dir))
+        # two simulated events (one recovered, one missed) and one unmatched prediction
+        assert written == ["chrT_1000.json", "chrT_40000.json", "chrT_9000.json"], written
+        kinds = {}
+        for name in written:
+            with open(os.path.join(ev.locus_dir, name)) as f:
+                kinds[name] = json.load(f)["kind"]
+        assert kinds["chrT_1000.json"] == "simulated_event", kinds
+        assert kinds["chrT_9000.json"] == "simulated_event", kinds
+        assert kinds["chrT_40000.json"] == "unmatched_prediction", kinds
+    print("PASS test_one_json_is_written_per_locus_either_side_knows_about")
+
+
+def test_a_locus_file_is_its_summary_entry_plus_run_context():
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"],
+                    [(1003, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"])])
+        with open(os.path.join(d, "out.json")) as f:
+            summary = json.load(f)
+        entry = summary["events"][0]
+        assert entry["locus_file"] == "out_loci/chrT_1000.json", entry["locus_file"]
+        with open(os.path.join(d, entry["locus_file"])) as f:
+            locus = json.load(f)
+        assert locus.pop("kind") == "simulated_event"
+        run = locus.pop("run")
+        assert locus == entry, (locus, entry)
+        # the file stands alone: it says which run produced it and where the rest lives
+        assert run["max_dist"] == 100 and run["n_paired_genomes"] == 1, run
+        assert run["summary_file"].endswith("out.json"), run
+    print("PASS test_a_locus_file_is_its_summary_entry_plus_run_context")
+
+
+def test_stacked_events_at_one_position_get_distinct_files():
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"],
+                    [_ins(1000, ["1"]), _ins(1000, ["1"])], ["S0"],
+                    [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"])])
+        written = sorted(os.listdir(ev.locus_dir))
+        assert written == ["chrT_1000-2.json", "chrT_1000.json"], written
+        # one of the two was recovered and the other was not; neither overwrote the other
+        detected = sorted(json.load(open(os.path.join(ev.locus_dir, n)))["detected"]
+                          for n in written)
+        assert detected == [False, True], detected
+    print("PASS test_stacked_events_at_one_position_get_distinct_files")
+
+
+def test_an_unmatched_prediction_records_its_nearest_simulated_event():
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"],
+                    [(1400, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"])])
+        with open(os.path.join(ev.locus_dir, "chrT_1400.json")) as f:
+            locus = json.load(f)
+        assert locus["kind"] == "unmatched_prediction", locus
+        assert locus["id"] == "1.1" and locus["carriers"]["predicted"] == ["S0"], locus
+        near = locus["nearest_simulated_event"]
+        # 400 bp away: outside --max_dist, but plainly a near miss rather than a novel call
+        assert near["distance_bp"] == 400 and near["pos"] == 1000, near
+        assert near["detected"] is False, near
+    print("PASS test_an_unmatched_prediction_records_its_nearest_simulated_event")
+
+
+def test_rerunning_clears_locus_files_left_by_the_previous_run():
+    """A file from an earlier truth VCF would read as this run's result."""
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"]), _ins(9000, ["1"])],
+                    ["S0"], [])
+        assert len(os.listdir(ev.locus_dir)) == 2, os.listdir(ev.locus_dir)
+        ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"], [])
+        assert os.listdir(ev.locus_dir) == ["chrT_1000.json"], os.listdir(ev.locus_dir)
+    print("PASS test_rerunning_clears_locus_files_left_by_the_previous_run")
+
+
+def test_a_contig_name_unsafe_in_a_filename_is_sanitised():
+    from TEvarSim.evaluate import locus_filenames
+
+    class _Rec:
+        chrom, pos = "scaffold|7/a", 42
+    events = [{"chrom": "chr:1*", "pos": 100}]
+    assert locus_filenames(events, [_Rec()]) == ["chr_1__100.json", "scaffold_7_a_42.json"]
+    print("PASS test_a_contig_name_unsafe_in_a_filename_is_sanitised")
+
+
 def test_a_bed_prediction_scores_detection_only():
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], [],
@@ -528,5 +617,11 @@ if __name__ == "__main__":
     test_unknown_tetype_raises_with_the_available_families()
     test_json_holds_one_object_per_event_and_is_reloadable()
     test_the_printed_report_names_the_headline_numbers()
+    test_one_json_is_written_per_locus_either_side_knows_about()
+    test_a_locus_file_is_its_summary_entry_plus_run_context()
+    test_stacked_events_at_one_position_get_distinct_files()
+    test_an_unmatched_prediction_records_its_nearest_simulated_event()
+    test_rerunning_clears_locus_files_left_by_the_previous_run()
+    test_a_contig_name_unsafe_in_a_filename_is_sanitised()
     test_a_bed_prediction_scores_detection_only()
     test_an_empty_prediction_scores_zero_without_dividing_by_zero()

@@ -312,8 +312,19 @@ proximity. That is what keeps a stacked pair of elements honest: two elements at
 prediction records for both to count as recovered, rather than both claiming the single record that
 happens to sit there.
 
-`--outprefix` writes `<outprefix>.json`, holding the run's parameters, the aggregate summary and one
-object per simulated event, so per-event results can be reloaded for plotting or regression checks.
+**Output.** `--outprefix` writes two things:
+
+- `<outprefix>.json` — the run's parameters, the aggregate summary, and one object per simulated
+  event, so results can be reloaded for plotting or regression checks.
+- `<outprefix>_loci/` — one self-contained JSON per locus, named `<chrom>_<pos>.json` after where
+  the event was simulated. Every simulated event gets a file, including the ones the prediction
+  never called, and so does every prediction that matched no simulated event (`"kind":
+  "unmatched_prediction"`, recording its nearest simulated event so a call landing just outside
+  `--max_dist` is distinguishable from one with nothing simulated near it). Two elements stacked at
+  one position take a `-2`, `-3` suffix. Each file repeats enough of the run to be read on its own;
+  strip its `run` and `kind` keys and what is left is exactly that locus's entry in the summary's
+  `events` list, which also carries a `locus_file` pointing back at it. Files left by an earlier run
+  of the same prefix are cleared first, so the directory only ever describes the current run.
 
 **Note on the TE family.** The family is parsed exactly as `Compare --TEtype` parses it, so the
 labels in the "By TE family" table are the values that flag accepts: `AluY` for an insertion whose

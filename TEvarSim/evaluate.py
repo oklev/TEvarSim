@@ -24,6 +24,8 @@ Allele comparison, family parsing and the confusion-count arithmetic are shared 
 ``Compare`` so the two subcommands agree on what "the same allele" means.
 '''
 import json
+import os
+import re
 import sys
 from collections import OrderedDict
 
@@ -748,8 +750,9 @@ class Evaluator:
         scored = [score_event(event, pairs, self.gt_len_tol)
                   for event in sorted(events, key=lambda e: (e.chrom, e.pos))]
 
-        matched = sum(1 for r in records if r.matched)
-        unmatched = len(records) - matched
+        unmatched_records = [r for r in records if not r.matched]
+        matched = len(records) - len(unmatched_records)
+        unmatched = len(unmatched_records)
         filters = ", ".join(
             part for part in (
                 f"--TEtype {self.TEtype}" if self.TEtype else "",
@@ -812,7 +815,28 @@ class Evaluator:
         report = format_report(summary, meta)
         print(report)
 
+        # One file per locus, alongside the combined summary. The name each event was
+        # written under goes into the summary too, so the two outputs can be joined
+        # without reconstructing the naming rules.
         out_path = f"{self.outprefix}.json"
+        locus_dir = f"{self.outprefix}_loci"
+        names = locus_filenames(scored, unmatched_records)
+        locus_ref = os.path.basename(locus_dir)
+        for event, name in zip(scored, names):
+            event["locus_file"] = f"{locus_ref}/{name}"
+        run = OrderedDict([
+            ("truth", self.truth_file),
+            ("pred", self.pred_file),
+            ("predType", self.predType),
+            ("filters", filters),
+            ("max_dist", self.max_dist),
+            ("gt_len_tol", self.gt_len_tol),
+            ("nHap", self.nHap),
+            ("n_paired_genomes", len(pairs)),
+            ("summary_file", out_path),
+        ])
+        removed = write_locus_files(locus_dir, run, scored, unmatched_records, names)
+
         with open(out_path, "w") as fo:
             json.dump(OrderedDict([("meta", meta), ("summary", summary),
                                    ("events", scored)]), fo, indent=2)
@@ -821,10 +845,17 @@ class Evaluator:
         # unbuffered stderr note would otherwise land above a report it comes after.
         sys.stdout.flush()
         print(f"[INFO] per-event results written to {out_path}", file=sys.stderr)
+        print(f"[INFO] {len(names)} per-locus files written to {locus_dir}/ "
+              f"({len(scored)} simulated events, {len(unmatched_records)} unmatched "
+              f"predictions"
+              + (f"; {removed} stale file(s) replaced)" if removed else ")"),
+              file=sys.stderr)
 
         self.meta = meta
         self.summary = summary
         self.events = scored
+        self.locus_dir = locus_dir
+        self.locus_files = names
         return self
 
 
@@ -835,6 +866,97 @@ def _order_bins(strata, labels):
         if label not in ordered:
             ordered[label] = stats
     return ordered
+
+
+# ---- per-locus files ---------------------------------------------------------
+
+# Contig names end up in a filename, so anything unsafe there is replaced.
+_UNSAFE_IN_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def locus_filenames(scored, unmatched):
+    '''
+    Name one file per locus, keyed by where the event was simulated: ``<chrom>_<pos>.json``.
+
+    Two elements stacked at one position -- and an unmatched call sitting on a simulated
+    event that was paired with a different record -- share a key, so repeats take a
+    ``-2``, ``-3`` suffix in the order they are written: simulated events first, then the
+    predictions that matched none of them.
+    '''
+    seen = {}
+    names = []
+    keyed = [(e["chrom"], e["pos"]) for e in scored] + [(r.chrom, r.pos) for r in unmatched]
+    for chrom, pos in keyed:
+        key = f"{_UNSAFE_IN_FILENAME.sub('_', str(chrom))}_{pos}"
+        seen[key] = seen.get(key, 0) + 1
+        names.append(f"{key}.json" if seen[key] == 1 else f"{key}-{seen[key]}.json")
+    return names
+
+
+def nearest_event(record, scored):
+    '''
+    The closest simulated event on this contig to a prediction that matched none of them,
+    which is what separates a call landing just outside --max_dist from one with nothing
+    simulated anywhere near it.
+    '''
+    best = None
+    for event in scored:
+        if event["chrom"] != record.chrom:
+            continue
+        distance = abs(event["pos"] - record.pos)
+        if best is None or distance < best[0]:
+            best = (distance, event)
+    if best is None:
+        return None
+    distance, event = best
+    return OrderedDict([("chrom", event["chrom"]), ("pos", event["pos"]),
+                        ("id", event["id"]), ("distance_bp", distance),
+                        ("detected", event["detected"])])
+
+
+def unmatched_payload(record, scored):
+    '''Describe a prediction that no simulated event claimed.'''
+    carriers = [sample for sample, gt in record.gts.items()
+                if is_carrier(gt, record.nonvariant)]
+    return OrderedDict([
+        ("chrom", record.chrom),
+        ("pos", record.pos),
+        ("id", record.id),
+        ("allele_bp", event_size(record.alt_descs)),
+        ("carriers", OrderedDict([("predicted", carriers)])),
+        ("nearest_simulated_event", nearest_event(record, scored)),
+    ])
+
+
+def write_locus_files(directory, run, scored, unmatched, names):
+    '''
+    Write one self-contained JSON per locus: every simulated event, and every prediction
+    that matched none of them. Each file repeats enough of the run to be read on its own
+    and names the combined summary it came from; strip ``run`` and ``kind`` and what is
+    left is exactly that locus's entry in the summary's ``events`` list.
+
+    Files left by an earlier run of the same prefix would read as this run's results, so
+    the directory's own .json files are cleared first. Returns how many were removed.
+    '''
+    os.makedirs(directory, exist_ok=True)
+    removed = 0
+    for stale in sorted(os.listdir(directory)):
+        path = os.path.join(directory, stale)
+        if stale.endswith(".json") and os.path.isfile(path):
+            os.remove(path)
+            removed += 1
+
+    payloads = [(name, "simulated_event", event)
+                for name, event in zip(names, scored)]
+    payloads += [(name, "unmatched_prediction", unmatched_payload(record, scored))
+                 for name, record in zip(names[len(scored):], unmatched)]
+    for name, kind, body in payloads:
+        payload = OrderedDict([("run", run), ("kind", kind)])
+        payload.update(body)
+        with open(os.path.join(directory, name), "w") as fo:
+            json.dump(payload, fo, indent=2)
+            fo.write("\n")
+    return removed
 
 
 def _af_bin_labels(edges):
