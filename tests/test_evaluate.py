@@ -381,6 +381,82 @@ def test_stratification_splits_events_by_type_family_size_and_frequency():
     print("PASS test_stratification_splits_events_by_type_family_size_and_frequency")
 
 
+# A merged record: the element was inserted, then excised to a solo LTR on a later allele.
+# INFO/TYPE is Number=1 and names only the event that created the record, so it reads INS.
+_MERGED = (3000, "TY1-FULL#LTR/Copia_1INDEL", ANCHOR,
+           [ANCHOR + ELEMENT, ANCHOR + SOLO_LTR], "TYPE=INS;EVENTTYPE=INS,EXC")
+# A standalone excision of an element the reference already carried.
+_STANDALONE_EXC = (5000, "EXC-chrT-5000-10929-336-LTR/Copia-TY1-FULL", ANCHOR + ELEMENT,
+                   [ANCHOR + SOLO_LTR], "TYPE=EXC;EVENTTYPE=EXC")
+
+
+def test_an_excised_insertion_counts_under_both_ins_and_exc():
+    """INFO/TYPE names only the event that created the record, so counting by it put every
+    excision of a simulated element in the INS row and left the EXC row counting only the
+    excisions of elements the reference already carried."""
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"],
+                    [_ins(1000, ["1"]), _MERGED + (["2"],), _STANDALONE_EXC + (["1"],)],
+                    ["S0"], [])
+        merged = [e for e in ev.events if e["pos"] == 3000][0]
+        assert merged["type"] == "INS", merged["type"]
+        assert merged["event_classes"] == ["EXC", "INS"], merged["event_classes"]
+        by_type = ev.summary["by_event_type"]
+        # 3 events, but 4 rows-worth: the merged one is in both
+        assert by_type["INS"]["n_events"] == 2, by_type["INS"]
+        assert by_type["EXC"]["n_events"] == 2, by_type["EXC"]
+        assert sum(s["n_events"] for s in by_type.values()) == 4, by_type
+        assert ev.summary["overall"]["n_events"] == 3, ev.summary["overall"]
+        # the history table still counts each record once
+        assert sum(s["n_events"] for s in ev.summary["by_event_history"].values()) == 3
+    print("PASS test_an_excised_insertion_counts_under_both_ins_and_exc")
+
+
+def test_an_event_is_only_counted_where_its_allele_has_the_right_shape():
+    """An INS allele has to add sequence and an EXC allele has to take it away."""
+    # declares INS,EXC but the second allele is a stacked pair -- it grows, not shrinks
+    bad = (3000, "TY1-FULL#LTR/Copia_1INDEL", ANCHOR,
+           [ANCHOR + ELEMENT, ANCHOR + STACKED], "TYPE=INS;EVENTTYPE=INS,EXC", ["2"])
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [bad], ["S0"], [])
+        event = ev.events[0]
+        assert event["event_classes"] == ["INS"], event["event_classes"]
+        assert event["unsupported_events"], event
+        assert "EXC allele 2" in event["unsupported_events"][0], event["unsupported_events"]
+        assert "EXC" not in ev.summary["by_event_type"], list(ev.summary["by_event_type"])
+        assert len(ev.summary["unsupported_events"]) == 1, ev.summary["unsupported_events"]
+    print("PASS test_an_event_is_only_counted_where_its_allele_has_the_right_shape")
+
+
+def test_an_unsupported_event_is_named_in_the_report():
+    import contextlib
+    import io
+    bad = (3000, "TY1-FULL#LTR/Copia_1INDEL", ANCHOR,
+           [ANCHOR + ELEMENT, ANCHOR + STACKED], "TYPE=INS;EVENTTYPE=INS,EXC", ["2"])
+    with tempfile.TemporaryDirectory() as d:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+            _evaluate(d, ["S0"], [bad], ["S0"], [])
+        out = buf.getvalue()
+        assert "no allele bears out" in out, out
+        assert "chrT:3000" in out, out
+    print("PASS test_an_unsupported_event_is_named_in_the_report")
+
+
+def test_a_length_change_within_tolerance_counts_as_neither():
+    """Below --gt_len_tol two alleles are the same length everywhere else, so a change that
+    small is no evidence of an insertion or an excision."""
+    tiny = (3000, "TY1-FULL#LTR/Copia_1INDEL", ANCHOR, [ANCHOR + "A" * 10],
+            "TYPE=INS;EVENTTYPE=INS", ["1"])
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [tiny], ["S0"], [], gt_len_tol=50)
+        assert ev.events[0]["event_classes"] == [], ev.events[0]["event_classes"]
+        assert ev.events[0]["unsupported_events"], ev.events[0]
+        # it still appears, under a label that says it demonstrated nothing
+        assert list(ev.summary["by_event_type"]) == ["?"], list(ev.summary["by_event_type"])
+    print("PASS test_a_length_change_within_tolerance_counts_as_neither")
+
+
 def test_the_superfamily_table_appears_only_when_it_groups_something():
     """TY1 and TY2 are both LTR/Copia, so the superfamily is a coarser cut; one family alone
     would make the table a copy of the family table, so it is left out."""
@@ -430,8 +506,12 @@ def test_event_history_separates_an_excised_insertion_from_a_plain_one():
         assert ev.events[1]["history"] == "INS", ev.events[1]
         assert set(ev.summary["by_event_history"]) == {"INS", "INS,EXC"}, \
             list(ev.summary["by_event_history"])
-        # both are TYPE=INS, so the type table does not separate them
-        assert list(ev.summary["by_event_type"]) == ["INS"], list(ev.summary["by_event_type"])
+        # INFO/TYPE reads INS for both records, but the excision allele on the first is
+        # still counted as an excision rather than being absorbed into the INS row
+        assert set(ev.summary["by_event_type"]) == {"INS", "EXC"}, \
+            list(ev.summary["by_event_type"])
+        assert ev.summary["by_event_type"]["INS"]["n_events"] == 2, ev.summary["by_event_type"]
+        assert ev.summary["by_event_type"]["EXC"]["n_events"] == 1, ev.summary["by_event_type"]
     print("PASS test_event_history_separates_an_excised_insertion_from_a_plain_one")
 
 
@@ -644,6 +724,10 @@ if __name__ == "__main__":
     test_sample_map_naming_an_absent_sample_is_an_error()
     test_nhap_merges_haplotype_columns_before_pairing()
     test_stratification_splits_events_by_type_family_size_and_frequency()
+    test_an_excised_insertion_counts_under_both_ins_and_exc()
+    test_an_event_is_only_counted_where_its_allele_has_the_right_shape()
+    test_an_unsupported_event_is_named_in_the_report()
+    test_a_length_change_within_tolerance_counts_as_neither()
     test_the_superfamily_table_appears_only_when_it_groups_something()
     test_size_bins_are_reported_in_bin_order_not_by_size_of_group()
     test_custom_bin_edges_are_honoured()

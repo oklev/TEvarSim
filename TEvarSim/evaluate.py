@@ -120,6 +120,81 @@ def event_type(record, info):
     return "OTHER"
 
 
+def alt_event_types(record, info):
+    '''
+    The event behind each ALT allele, one value per ALT.
+
+    ``INFO/EVENTTYPE`` is Number=A and carries exactly this. ``INFO/TYPE`` is Number=1 and
+    names only the event that created the record, so an element inserted and later excised
+    reads TYPE=INS and says nothing about the excision -- which is why the per-allele field
+    is what the event classes are counted from.
+    '''
+    n_alts = len(record.alts or ())
+    raw = info.get("EVENTTYPE")
+    if not raw:
+        return [event_type(record, info)] * n_alts
+    types = [str(t) for t in _as_tuple(raw)]
+    if len(types) < n_alts:
+        types += [types[-1] if types else "?"] * (n_alts - len(types))
+    return types[:n_alts]
+
+
+# What each event class does to the length of the locus. An insertion adds sequence, an
+# excision and a deletion take it away.
+EVENT_SHAPE = {"INS": "gain", "EXC": "loss", "DEL": "loss"}
+
+
+def allele_deltas(alt_descs):
+    '''
+    How much sequence each ALT adds or removes relative to the allele before it.
+
+    Read against the previous allele rather than against REF, because that is the allele it
+    was built from: on a record where an element was inserted and later excised, the
+    excision allele is still far longer than REF -- it holds the anchor and the solo LTR --
+    and only reads as a loss beside the full-length allele that preceded it.
+    '''
+    deltas = []
+    previous = 0                                  # REF
+    for desc in alt_descs:
+        if desc.symbolic or desc.size is None:
+            deltas.append(None)
+            continue
+        deltas.append(desc.size - previous)
+        previous = desc.size
+    return deltas
+
+
+def event_classes(alt_descs, event_types, tol):
+    '''
+    Which event classes a record's alleles bear out, and which its EVENTTYPE declares
+    without an allele of the matching shape.
+
+    An event is only counted where the allele it names actually does what that event does:
+    an INS allele has to add sequence and an EXC allele has to take it away. Otherwise a
+    mislabelled or half-merged record would be scored under a class it never demonstrates.
+    Changes within ``tol`` count as neither, since that is the slack at which two alleles
+    are treated as the same length everywhere else.
+
+    Returns (supported classes, descriptions of the declared-but-unsupported ones).
+    '''
+    deltas = allele_deltas(alt_descs)
+    supported, unsupported = set(), []
+    for index, event in enumerate(event_types):
+        wanted = EVENT_SHAPE.get(event)
+        delta = deltas[index] if index < len(deltas) else None
+        if wanted is None or delta is None:
+            # An event class with no length signature, or a symbolic allele with no length
+            # to read: nothing to contradict, so take the record at its word.
+            supported.add(event)
+            continue
+        found = "gain" if delta > tol else "loss" if delta < -tol else "flat"
+        if found == wanted:
+            supported.add(event)
+        else:
+            unsupported.append(f"{event} allele {index + 1} {found}s {abs(delta)}bp")
+    return supported, unsupported
+
+
 def event_history(record, info):
     '''
     What happened to this record's element over the whole simulation, e.g. ``INS`` for a
@@ -205,6 +280,7 @@ def load_truth_events(vcf_file, INSonly, TEtype):
                       info, family, superfamily, gts, descs, alt_descs)
         event.type = etype
         event.history = event_history(record, info)
+        event.alt_events = alt_event_types(record, info)
         event.size = event_size(alt_descs)
         events.append(event)
     if wanted is not None and not any(f.casefold() == wanted for f in seen_families):
@@ -443,6 +519,9 @@ def score_event(event, pairs, tol):
     scored["id"] = event.id
     scored["type"] = event.type
     scored["history"] = event.history
+    supported, unsupported = event_classes(event.alt_descs, event.alt_events, tol)
+    scored["event_classes"] = sorted(supported)
+    scored["unsupported_events"] = unsupported
     scored["family"] = event.family
     scored["superfamily"] = event.superfamily
     scored["size_bp"] = event.size
@@ -540,9 +619,19 @@ def aggregate(scored_events):
 
 def stratify(scored_events, key):
     '''Group events by ``key(event)`` and aggregate each group. Sorted by group size.'''
+    return stratify_multi(scored_events, lambda event: (key(event),))
+
+
+def stratify_multi(scored_events, keys):
+    '''
+    Group events by the set of labels ``keys(event)`` returns, so an event counts once in
+    each label it bears. The rows then do not sum to the number of events -- an element
+    that was inserted and later excised is one event under both INS and EXC.
+    '''
     groups = OrderedDict()
     for event in scored_events:
-        groups.setdefault(key(event), []).append(event)
+        for label in keys(event) or ("?",):
+            groups.setdefault(label, []).append(event)
     ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), str(kv[0])))
     return OrderedDict((str(label), aggregate(members)) for label, members in ordered)
 
@@ -703,6 +792,17 @@ def format_report(summary, meta):
     else:
         lines.append("Carrier accuracy: not available (no genomes paired)")
 
+    unsupported = summary.get("unsupported_events") or []
+    if unsupported:
+        lines.append("")
+        lines.append(f"Events declaring a type no allele bears out ({len(unsupported)})")
+        lines.append("  not counted under that type; the allele does not change length the "
+                     "way the event would")
+        for item in unsupported[:5]:
+            lines.append(f"  {item['chrom']}:{item['pos']}  {'; '.join(item['declared'])}")
+        if len(unsupported) > 5:
+            lines.append(f"  ... and {len(unsupported) - 5} more")
+
     for title, key in (("By event type", "by_event_type"),
                        ("By event history", "by_event_history"),
                        ("By TE family", "by_family"),
@@ -715,6 +815,9 @@ def format_report(summary, meta):
             continue
         lines.append("")
         lines.append(title)
+        if key == "by_event_type":
+            lines.append("  an event counts under every class in its history, so the rows "
+                         "do not sum to the event total")
         lines.extend(_table(STRATUM_HEADERS, _stratum_rows(strata)))
     lines.append("")
     return "\n".join(lines)
@@ -775,7 +878,15 @@ class Evaluator:
             ("unmatched", unmatched),
             ("precision", round(matched / len(records), 4) if records else None),
         ])
-        summary["by_event_type"] = stratify(scored, lambda e: e["type"])
+        # Counted per event class, not per record: an element inserted and later excised is
+        # one event under both INS and EXC, so its excision is scored as an excision rather
+        # than disappearing into the INS row because INFO/TYPE named the event that created
+        # the record. Rows therefore do not sum to the event count.
+        summary["by_event_type"] = stratify_multi(scored, lambda e: e["event_classes"])
+        summary["unsupported_events"] = [
+            OrderedDict([("chrom", e["chrom"]), ("pos", e["pos"]), ("id", e["id"]),
+                         ("declared", e["unsupported_events"])])
+            for e in scored if e["unsupported_events"]]
         if any(e["history"] != e["type"] for e in scored):
             summary["by_event_history"] = stratify(scored, lambda e: e["history"])
         summary["by_family"] = stratify(scored, lambda e: e["family"])

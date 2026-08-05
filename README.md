@@ -329,6 +329,17 @@ happens to sit there.
   `events` list, which also carries a `locus_file` pointing back at it. Files left by an earlier run
   of the same prefix are cleared first, so the directory only ever describes the current run.
 
+**Note on the event-type breakdown.** An event is counted under every event class in its history,
+so the rows do not sum to the event total: an element that was inserted and later excised is one
+event counted under both `INS` and `EXC`. This is read from `INFO/EVENTTYPE` (`Number=A`, one value
+per ALT allele), not `INFO/TYPE` (`Number=1`), which names only the event that created the record —
+by `TYPE` alone every excision of a simulated element would be filed under `INS` and the `EXC` row
+would count only excisions of elements the reference already carried. A class is credited only where
+the allele naming it has the matching shape: an `INS` allele has to add sequence relative to the
+allele before it and an `EXC` allele has to remove it, by more than `--gt_len_tol`. Anything
+declared without such an allele is left out of the count and listed in the report and in
+`summary.unsupported_events`.
+
 **Note on the TE family.** The family is parsed exactly as `Compare --TEtype` parses it, so the
 labels in the "By TE family" table are the values that flag accepts: `AluY` for an insertion whose
 pool sequence ID is `chr21-211282-len320-AluY#SINE/Alu-polyA23-strand+`, since neither the source
