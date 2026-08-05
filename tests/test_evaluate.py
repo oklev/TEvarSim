@@ -127,6 +127,40 @@ def test_breakpoint_and_length_error_are_measured_per_event():
     print("PASS test_breakpoint_and_length_error_are_measured_per_event")
 
 
+def test_offsets_are_signed_so_a_bias_does_not_cancel_against_jitter():
+    """A call short of the simulated value reads negative, past it positive.
+
+    Absolute values would give a caller consistently 4bp downstream and one scattering
+    +-4bp at random the same mean, and those are different problems.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        # both calls land 4bp downstream: a bias, so the mean is +4 and the SD 0
+        ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"]), _ins(9000, ["1"])], ["S0"],
+                    [(1004, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"]),
+                     (9004, "1.2", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"])])
+        offsets = ev.summary["overall"]["breakpoint_offset_bp"]
+        assert (offsets["n"], offsets["mean"], offsets["sd"]) == (2, 4.0, 0.0), offsets
+    with tempfile.TemporaryDirectory() as d:
+        # one short, one long by the same amount: no bias, but the scatter is visible
+        ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"]), _ins(9000, ["1"])], ["S0"],
+                    [(996, "1.1", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"]),
+                     (9004, "1.2", ANCHOR, [ANCHOR + ELEMENT], ".", ["1"])])
+        offsets = ev.summary["overall"]["breakpoint_offset_bp"]
+        assert (offsets["mean"], offsets["sd"]) == (0.0, 4.0), offsets
+    print("PASS test_offsets_are_signed_so_a_bias_does_not_cancel_against_jitter")
+
+
+def test_a_short_allele_reads_negative_and_a_long_one_positive():
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"],
+                    [(1000, "1.1", ANCHOR, [ANCHOR + ELEMENT_JITTERED], ".", ["1"])])
+        errors = ev.summary["overall"]["allele_length_error_bp"]
+        # the prediction is 6bp shorter than what was simulated
+        assert errors["mean"] == float(len(ELEMENT_JITTERED) - len(ELEMENT)), errors
+        assert errors["mean"] < 0, errors
+    print("PASS test_a_short_allele_reads_negative_and_a_long_one_positive")
+
+
 def test_a_prediction_beyond_max_dist_is_not_a_detection():
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"],
@@ -582,7 +616,7 @@ def test_an_empty_prediction_scores_zero_without_dividing_by_zero():
         overall = ev.summary["overall"]
         assert overall["detection_rate"] == 0.0, overall
         assert overall["allele_concordance_rate"] is None, overall
-        assert overall["breakpoint_offset_bp"]["median"] is None, overall
+        assert overall["breakpoint_offset_bp"]["mean"] is None, overall
         assert ev.summary["predictions"]["precision"] is None, ev.summary["predictions"]
         assert overall["carriers"]["recall"] == 0.0, overall["carriers"]
     print("PASS test_an_empty_prediction_scores_zero_without_dividing_by_zero")
@@ -591,6 +625,8 @@ def test_an_empty_prediction_scores_zero_without_dividing_by_zero():
 if __name__ == "__main__":
     test_every_event_is_scored_without_naming_a_genome()
     test_breakpoint_and_length_error_are_measured_per_event()
+    test_offsets_are_signed_so_a_bias_does_not_cancel_against_jitter()
+    test_a_short_allele_reads_negative_and_a_long_one_positive()
     test_a_prediction_beyond_max_dist_is_not_a_detection()
     test_one_prediction_cannot_cover_two_stacked_events()
     test_allele_agreement_wins_over_proximity_when_pairing()

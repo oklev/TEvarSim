@@ -303,7 +303,10 @@ breakpoint accuracy are still reported and the carrier statistics are marked una
 **What is reported.** For each simulated event:
 - whether the prediction recovered the locus at all, and whether the allele it called is the same
   one that was simulated (by sequence, or by net length change within `--gt_len_tol`);
-- the breakpoint offset and allele length error of the matched call;
+- the breakpoint offset and allele length error of the matched call, both **signed** — a call
+  landing short of the simulated value reads negative and one past it positive, reported as a mean
+  and SD so a systematic bias shows up as a mean away from zero instead of being folded in with
+  random jitter;
 - which genomes were called as carriers versus which genomes actually carry it (carrier TP/FP/FN);
 - whether the genotype of each paired genome agrees, by allele content.
 

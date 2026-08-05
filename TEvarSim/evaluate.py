@@ -476,27 +476,25 @@ def score_event(event, pairs, tol):
 # ---- aggregation -------------------------------------------------------------
 
 
-def _percentile(values, q):
-    if not values:
-        return None
-    ordered = sorted(values)
-    k = (len(ordered) - 1) * q
-    low = int(k)
-    high = min(low + 1, len(ordered) - 1)
-    return round(ordered[low] + (ordered[high] - ordered[low]) * (k - low), 2)
-
-
 def _spread(values):
-    '''Median / mean / 90th percentile / max of a list of absolute errors.'''
+    '''
+    Mean and standard deviation of a signed error.
+
+    Signed rather than absolute: a call that lands short of the simulated value reads
+    negative and one that overshoots positive, so a systematic bias shows up as a mean away
+    from zero instead of being folded in with random jitter -- a caller consistently 3bp
+    downstream and one scattering +-3bp at random are the same number in absolute terms and
+    quite different problems. The SD is the population SD: these are all the events that
+    were recovered, not a sample drawn from more of them.
+    '''
     if not values:
-        return OrderedDict([("n", 0), ("median", None), ("mean", None),
-                            ("p90", None), ("max", None)])
+        return OrderedDict([("n", 0), ("mean", None), ("sd", None)])
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / len(values)
     return OrderedDict([
         ("n", len(values)),
-        ("median", _percentile(values, 0.5)),
-        ("mean", round(sum(values) / len(values), 2)),
-        ("p90", _percentile(values, 0.9)),
-        ("max", max(values)),
+        ("mean", round(mean, 2)),
+        ("sd", round(variance ** 0.5, 2)),
     ])
 
 
@@ -512,8 +510,11 @@ def aggregate(scored_events):
     compared = sum(e["genotypes"]["compared"] for e in scored_events)
     concordant = sum(e["genotypes"]["concordant"] for e in scored_events)
     f1, precision, recall = calculate_metrics(tp, fp, fn)
-    offsets = [abs(e["match"]["pos_offset"]) for e in detected]
-    errors = [abs(e["match"]["length_error"]) for e in detected
+    # Signed, both of them: pos_offset is the call's position minus the simulated one and
+    # length_error the called allele's length minus the simulated one, so short reads
+    # negative and long reads positive.
+    offsets = [e["match"]["pos_offset"] for e in detected]
+    errors = [e["match"]["length_error"] for e in detected
               if e["match"]["length_error"] is not None]
     return OrderedDict([
         ("n_events", n),
@@ -595,6 +596,14 @@ def _num(value):
     return "-" if value is None else f"{value:g}" if isinstance(value, float) else str(value)
 
 
+def _signed(value):
+    '''
+    Render a signed error with its sign always shown, so the direction of a bias reads at a
+    glance. "n/a" rather than "-" for a missing value, which would look like a minus sign.
+    '''
+    return "n/a" if value is None else f"{value:+g}"
+
+
 def _table(headers, rows):
     '''Render a fixed-width table. Numbers right-aligned, the first column left-aligned.'''
     if not rows:
@@ -619,7 +628,8 @@ def _stratum_rows(strata):
             stats["n_detected"],
             _pct(stats["detection_rate"]),
             _pct(stats["allele_concordance_rate"]),
-            _num(stats["breakpoint_offset_bp"]["median"]),
+            _signed(stats["breakpoint_offset_bp"]["mean"]),
+            _signed(stats["allele_length_error_bp"]["mean"]),
             _num(stats["carriers"]["f1"]),
             _pct(stats["genotypes"]["concordance"]),
         ])
@@ -627,7 +637,7 @@ def _stratum_rows(strata):
 
 
 STRATUM_HEADERS = ["stratum", "events", "found", "detection",
-                   "allele ok", "med |off|", "carrier F1", "genotype"]
+                   "allele ok", "mean off", "mean len err", "carrier F1", "genotype"]
 
 
 def format_report(summary, meta):
@@ -672,12 +682,11 @@ def format_report(summary, meta):
     errors = overall["allele_length_error_bp"]
     lines.append("")
     lines.append("Accuracy of the recovered events")
-    lines.append(f"  breakpoint |offset| : median {_num(offsets['median'])} bp, "
-                 f"mean {_num(offsets['mean'])} bp, p90 {_num(offsets['p90'])} bp, "
-                 f"max {_num(offsets['max'])} bp   (n={offsets['n']})")
-    lines.append(f"  allele |length err| : median {_num(errors['median'])} bp, "
-                 f"mean {_num(errors['mean'])} bp, p90 {_num(errors['p90'])} bp, "
-                 f"max {_num(errors['max'])} bp   (n={errors['n']})")
+    lines.append(f"  breakpoint offset   : mean {_signed(offsets['mean'])} bp, "
+                 f"SD {_num(offsets['sd'])} bp   (n={offsets['n']})")
+    lines.append(f"  allele length error : mean {_signed(errors['mean'])} bp, "
+                 f"SD {_num(errors['sd'])} bp   (n={errors['n']})")
+    lines.append("  (- is short of the simulated value, + is past it)")
 
     carriers = overall["carriers"]
     genotypes = overall["genotypes"]
