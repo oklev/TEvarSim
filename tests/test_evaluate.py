@@ -40,6 +40,7 @@ TRUTH_HEADER_INFO = (
     '##INFO=<ID=TYPE,Number=1,Type=String,Description="Variant type">\n'
     '##INFO=<ID=EVENTTYPE,Number=A,Type=String,Description="Event per ALT allele">\n'
     '##INFO=<ID=MEPRESENT,Number=A,Type=Integer,Description="Element present per ALT">\n'
+    '##INFO=<ID=LTRLEN,Number=1,Type=Integer,Description="Solo LTR length">\n'
 )
 
 
@@ -106,7 +107,7 @@ def test_every_event_is_scored_without_naming_a_genome():
         overall = ev.summary["overall"]
         assert overall["n_loci"] == 3, overall
         assert overall["n_detected"] == 2, overall
-        assert overall["detection_rate"] == round(2 / 3, 4), overall
+        assert overall["recovery_rate"] == round(2 / 3, 4), overall
         # the event nobody called contributes its carrier to FN, not to a genotype error
         assert overall["carriers"] == {"tp": 4, "fp": 0, "fn": 1,
                                        "recall": 0.8, "precision": 1.0, "f1": 0.8889}, \
@@ -457,6 +458,95 @@ def test_a_length_change_within_tolerance_counts_as_neither():
     print("PASS test_a_length_change_within_tolerance_counts_as_neither")
 
 
+# A standalone excision: REF holds the full element, the ALT the anchor plus the solo LTR.
+# INFO/LTRLEN says how long that solo LTR is, which is how far downstream a caller anchoring
+# past it would put the call.
+_LTRLEN = len(SOLO_LTR)
+_EXC = (5000, "EXC-chrT-5000-10929-336-LTR/Copia-TY1-FULL", ANCHOR + ELEMENT,
+        [ANCHOR + SOLO_LTR], f"TYPE=EXC;EVENTTYPE=EXC;LTRLEN={_LTRLEN}")
+
+
+def test_an_excision_called_past_its_solo_ltr_counts_as_found_but_not_as_correct():
+    """A caller anchoring where the alleles start to differ puts an excision at the far end
+    of the surviving LTR, one whole LTR from the simulated POS. The locus was found, so it
+    is not a miss -- but the call is in the wrong place, so it is not a correct one."""
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [_EXC + (["1"],)], ["S0"],
+                    [(5000 + _LTRLEN, "6.1", ANCHOR + ELEMENT, [ANCHOR + SOLO_LTR], ".", ["1"])])
+        overall = ev.summary["overall"]
+        # counts toward recovery ...
+        assert (overall["n_recovered"], overall["recovery_rate"]) == (1, 1.0), overall
+        assert (overall["n_detected"], overall["n_displaced"]) == (0, 1), overall
+        # ... and toward nothing else
+        assert ev.summary["predictions"]["unmatched"] == 1, ev.summary["predictions"]
+        assert ev.summary["predictions"]["displaced"] == 1, ev.summary["predictions"]
+        assert ev.summary["predictions"]["precision"] == 0.0, ev.summary["predictions"]
+        assert overall["carriers"]["tp"] == 0, overall["carriers"]
+        assert overall["carriers"]["fn"] == 1, overall["carriers"]
+        assert overall["breakpoint_offset_bp"]["n"] == 0, overall["breakpoint_offset_bp"]
+        assert overall["n_allele_concordant"] == 0, overall
+        locus = ev.loci[0]
+        assert locus["recovered"] is True and locus["detected"] is False, locus
+        assert locus["displaced"]["pos_offset"] == _LTRLEN, locus["displaced"]
+    print("PASS test_an_excision_called_past_its_solo_ltr_counts_as_found_but_not_as_correct")
+
+
+def test_a_correctly_placed_excision_call_still_matches_normally():
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [_EXC + (["1"],)], ["S0"],
+                    [(5000, "6.1", ANCHOR + ELEMENT, [ANCHOR + SOLO_LTR], ".", ["1"])])
+        overall = ev.summary["overall"]
+        assert (overall["n_detected"], overall["n_displaced"]) == (1, 0), overall
+        assert ev.summary["predictions"]["precision"] == 1.0, ev.summary["predictions"]
+        assert overall["carriers"]["tp"] == 1, overall["carriers"]
+    print("PASS test_a_correctly_placed_excision_call_still_matches_normally")
+
+
+def test_a_displaced_call_is_recorded_as_such_in_its_locus_file():
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [_EXC + (["1"],)], ["S0"],
+                    [(5000 + _LTRLEN, "6.1", ANCHOR + ELEMENT, [ANCHOR + SOLO_LTR], ".", ["1"])])
+        payloads = [json.load(open(os.path.join(ev.locus_dir, n)))
+                    for n in sorted(os.listdir(ev.locus_dir))]
+        call = [p for p in payloads if p["kind"] == "unmatched_prediction"][0]
+        assert call["displaced_match_for"]["pos"] == 5000, call["displaced_match_for"]
+        assert call["displaced_match_for"]["pos_offset"] == _LTRLEN, call["displaced_match_for"]
+    print("PASS test_a_displaced_call_is_recorded_as_such_in_its_locus_file")
+
+
+def test_the_ltr_shift_falls_back_to_the_excision_allele_length():
+    """Without INFO/LTRLEN the excision allele is the anchor plus the solo LTR, so its own
+    length says how far a displaced call would sit."""
+    from TEvarSim.evaluate import ltr_shift
+
+    class _L:
+        alt_events = ["EXC"]
+        alts = (ANCHOR + SOLO_LTR,)
+        info = {}
+    assert ltr_shift(_L()) == len(SOLO_LTR), ltr_shift(_L())
+    _L.info = {"LTRLEN": 300}
+    assert ltr_shift(_L()) == 300, ltr_shift(_L())
+    # an insertion-only locus has no solo LTR and so no shift to try
+    class _I:
+        alt_events = ["INS"]
+        alts = (ANCHOR + ELEMENT,)
+        info = {}
+    assert ltr_shift(_I()) is None, ltr_shift(_I())
+    print("PASS test_the_ltr_shift_falls_back_to_the_excision_allele_length")
+
+
+def test_a_far_off_call_is_not_rescued_as_displaced():
+    """The shift is one solo LTR, not a licence to match anything downstream."""
+    with tempfile.TemporaryDirectory() as d:
+        ev = _quiet(_evaluate, d, ["S0"], [_EXC + (["1"],)], ["S0"],
+                    [(5000 + _LTRLEN + 5000, "6.1", ANCHOR + ELEMENT, [ANCHOR + SOLO_LTR],
+                      ".", ["1"])])
+        overall = ev.summary["overall"]
+        assert (overall["n_recovered"], overall["n_displaced"]) == (0, 0), overall
+        assert ev.summary["predictions"]["displaced"] == 0, ev.summary["predictions"]
+    print("PASS test_a_far_off_call_is_not_rescued_as_displaced")
+
+
 def test_the_superfamily_table_appears_only_when_it_groups_something():
     """TY1 and TY2 are both LTR/Copia, so the superfamily is a coarser cut; one family alone
     would make the table a copy of the family table, so it is left out."""
@@ -694,7 +784,7 @@ def test_an_empty_prediction_scores_zero_without_dividing_by_zero():
     with tempfile.TemporaryDirectory() as d:
         ev = _quiet(_evaluate, d, ["S0"], [_ins(1000, ["1"])], ["S0"], [])
         overall = ev.summary["overall"]
-        assert overall["detection_rate"] == 0.0, overall
+        assert overall["recovery_rate"] == 0.0, overall
         assert overall["allele_concordance_rate"] is None, overall
         assert overall["breakpoint_offset_bp"]["mean"] is None, overall
         assert ev.summary["predictions"]["precision"] is None, ev.summary["predictions"]
@@ -728,6 +818,11 @@ if __name__ == "__main__":
     test_an_event_is_only_counted_where_its_allele_has_the_right_shape()
     test_an_unsupported_event_is_named_in_the_report()
     test_a_length_change_within_tolerance_counts_as_neither()
+    test_an_excision_called_past_its_solo_ltr_counts_as_found_but_not_as_correct()
+    test_a_correctly_placed_excision_call_still_matches_normally()
+    test_a_displaced_call_is_recorded_as_such_in_its_locus_file()
+    test_the_ltr_shift_falls_back_to_the_excision_allele_length()
+    test_a_far_off_call_is_not_rescued_as_displaced()
     test_the_superfamily_table_appears_only_when_it_groups_something()
     test_size_bins_are_reported_in_bin_order_not_by_size_of_group()
     test_custom_bin_edges_are_honoured()

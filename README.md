@@ -304,6 +304,21 @@ a silently wrong pairing would report confident, meaningless genotype accuracy. 
 when the two files name their genomes differently. If nothing can be paired, detection and
 breakpoint accuracy are still reported and the carrier statistics are marked unavailable.
 
+**Displaced excision calls.** A caller that anchors an SV where the two alleles begin to differ
+puts an excision at the far end of the surviving solo LTR, because the LTR itself is identical on
+both sides and collapses. The simulation writes `POS` at the start of the element, which is where
+the solo LTR starts, so the two conventions differ by exactly the LTR length — 338 bp on Ty1, far
+beyond any sane `--max_dist`. Left alone that scores one excision twice over: once as a miss and
+once as a false positive.
+
+Evaluate pairs such a call with its locus using `INFO/LTRLEN` (falling back to the length of the
+excision allele), and records it as **displaced** rather than as a match. A displaced call earns
+detection credit and nothing else: the locus counts as recovered, but the call is in the wrong
+place, so it contributes no allele, breakpoint, carrier or genotype statistics, and its record
+stays among the unmatched predictions — precision is not credited for it. The report breaks the
+recovered count into `correctly placed` and `displaced`, and the per-locus file for the call
+carries `displaced_match_for` so it is not mistaken for a spurious one.
+
 **What is reported.** For each simulated locus:
 - whether the prediction recovered the locus at all, and whether the allele it called is the same
   one that was simulated (by sequence, or by net length change within `--gt_len_tol`);

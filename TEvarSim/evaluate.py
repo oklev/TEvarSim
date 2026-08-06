@@ -77,6 +77,7 @@ class Locus:
         self.descs = descs          # truth sample -> resolved Allele tuple (or None)
         self.alt_descs = alt_descs  # every non-reference allele of the record
         self.match = None           # the prediction record paired with this locus
+        self.displaced = None       # a call that found it, but one solo LTR downstream
 
 
 class PredRecord:
@@ -93,6 +94,7 @@ class PredRecord:
         self.alt_descs = alt_descs
         self.nonvariant = nonvariant  # allele indices that mean "no variant here"
         self.matched = False
+        self.displaced_for = None     # the locus this call found at the wrong anchor
 
 
 # ---- loading -----------------------------------------------------------------
@@ -458,6 +460,73 @@ def match_events(events, records, max_dist, tol):
         taken_records.add((chrom, j))
         events[i].match = by_chrom[chrom][j]
         by_chrom[chrom][j].matched = True
+    match_displaced(events, by_chrom, taken_events, taken_records, max_dist, tol)
+
+
+def ltr_shift(event):
+    '''
+    How far downstream of an excision's POS a call would sit if it were anchored past the
+    solo LTR instead of at its start, or None if this locus has no excision allele.
+
+    ``INFO/LTRLEN`` gives the length directly; failing that the excision allele is the
+    anchor base plus the solo LTR, so its own length says the same thing.
+    '''
+    if "EXC" not in getattr(event, "alt_events", ()):
+        return None
+    declared = event.info.get("LTRLEN")
+    if declared:
+        try:
+            return int(_as_tuple(declared)[0])
+        except (TypeError, ValueError):
+            pass
+    index = list(event.alt_events).index("EXC")
+    if index < len(event.alts):
+        return max(0, len(event.alts[index]) - 1)
+    return None
+
+
+def match_displaced(events, by_chrom, taken_events, taken_records, max_dist, tol):
+    '''
+    Pair a leftover excision with a call sitting one solo LTR downstream of it.
+
+    A caller that anchors an SV where the two alleles start to differ puts an excision at
+    the far end of the surviving LTR, since the LTR itself is identical either side and
+    collapses. The simulation writes POS at the start of the element, which is where the
+    solo LTR starts, so the two conventions differ by exactly the LTR length -- 338bp on
+    Ty1, well past any sane --max_dist. Left alone that scores one excision twice over, as
+    a miss and as a false positive.
+
+    Such a pair is recorded as ``displaced``, never as ``match``: the locus was found, so it
+    is not a miss, but the call is in the wrong place, so it is not a correct prediction
+    either. It earns detection credit and nothing else -- no allele or breakpoint
+    statistics, no carrier or genotype credit, and the record stays among the unmatched
+    predictions, so precision is unaffected.
+    '''
+    for i, event in enumerate(events):
+        if i in taken_events:
+            continue
+        shift = ltr_shift(event)
+        if not shift:
+            continue
+        expected = event.pos + shift
+        best = None
+        for j, record in enumerate(by_chrom.get(event.chrom, [])):
+            if (event.chrom, j) in taken_records:
+                continue
+            distance = abs(record.pos - expected)
+            if distance > max_dist:
+                continue
+            agree = alleles_overlap(event.alt_descs, record.alt_descs, tol)
+            key = (not agree, distance, j)
+            if best is None or key < best[0]:
+                best = (key, j)
+        if best is None:
+            continue
+        j = best[1]
+        taken_events.add(i)
+        taken_records.add((event.chrom, j))
+        event.displaced = by_chrom[event.chrom][j]
+        by_chrom[event.chrom][j].displaced_for = event
 
 
 # ---- per-event scoring -------------------------------------------------------
@@ -540,7 +609,19 @@ def score_event(event, pairs, tol):
     scored["allele_count"] = ac
     scored["allele_number"] = an
     scored["n_carrier_genomes"] = n_truth_carriers
+    # "detected" stays the strict sense -- a correctly placed call. A displaced one
+    # found the locus but at the wrong anchor, so it counts toward recovery and nothing
+    # else: no allele, breakpoint, carrier or genotype credit, and its record stays among
+    # the unmatched predictions.
     scored["detected"] = match is not None
+    scored["displaced"] = None if event.displaced is None else OrderedDict([
+        ("id", event.displaced.id),
+        ("pos", event.displaced.pos),
+        ("pos_offset", event.displaced.pos - event.pos),
+        ("allele_bp", event_size(event.displaced.alt_descs)),
+        ("expected_at", event.pos),
+    ])
+    scored["recovered"] = match is not None or event.displaced is not None
     if match is None:
         scored["match"] = None
     else:
@@ -592,6 +673,8 @@ def aggregate(scored_events):
     '''Roll a list of scored events up into one block of metrics.'''
     n = len(scored_events)
     detected = [e for e in scored_events if e["detected"]]
+    displaced = [e for e in scored_events if e.get("displaced")]
+    recovered = len(detected) + len(displaced)
     allele_ok = sum(1 for e in detected if e["match"]["allele_match"])
     allele_comparable = sum(1 for e in detected if e["match"]["allele_match"] is not None)
     tp = sum(e["carriers"]["tp"] for e in scored_events)
@@ -608,8 +691,10 @@ def aggregate(scored_events):
               if e["match"]["length_error"] is not None]
     return OrderedDict([
         ("n_loci", n),
+        ("n_recovered", recovered),
+        ("recovery_rate", round(recovered / n, 4) if n else None),
         ("n_detected", len(detected)),
-        ("detection_rate", round(len(detected) / n, 4) if n else None),
+        ("n_displaced", len(displaced)),
         ("n_allele_concordant", allele_ok),
         ("allele_concordance_rate",
          round(allele_ok / allele_comparable, 4) if allele_comparable else None),
@@ -725,8 +810,9 @@ def _stratum_rows(strata):
         rows.append([
             label,
             stats["n_loci"],
-            stats["n_detected"],
-            _pct(stats["detection_rate"]),
+            stats["n_recovered"],
+            stats["n_displaced"],
+            _pct(stats["recovery_rate"]),
             _pct(stats["allele_concordance_rate"]),
             _signed(stats["breakpoint_offset_bp"]["mean"]),
             _signed(stats["allele_length_error_bp"]["mean"]),
@@ -742,7 +828,7 @@ def stratum_headers(unit="loci"):
     actually hold: every table counts loci except the event-type one, where a locus is
     counted under each event class in its history and the column therefore counts events.
     '''
-    return ["stratum", unit, "found", "detection",
+    return ["stratum", unit, "found", "displ", "recovery",
             "allele ok", "mean off", "mean len err", "carrier F1", "genotype"]
 
 
@@ -775,14 +861,22 @@ def format_report(summary, meta):
     overall = summary["overall"]
     lines.append("")
     lines.append(f"Locus detection ({overall['n_loci']} simulated loci)")
-    lines.append(f"  recovered            : {overall['n_detected']} / {overall['n_loci']}"
-                 f"  ({_pct(overall['detection_rate'])})")
+    lines.append(f"  recovered            : {overall['n_recovered']} / {overall['n_loci']}"
+                 f"  ({_pct(overall['recovery_rate'])})")
+    if overall["n_displaced"]:
+        lines.append(f"    correctly placed   : {overall['n_detected']}")
+        lines.append(f"    displaced          : {overall['n_displaced']}"
+                     "   (call sits past the solo LTR, not at its start -- found, but not "
+                     "a correct call)")
     lines.append(f"  allele concordant    : {overall['n_allele_concordant']} of the "
-                 f"recovered  ({_pct(overall['allele_concordance_rate'])})")
+                 f"{overall['n_detected']} correctly placed  "
+                 f"({_pct(overall['allele_concordance_rate'])})")
+    displaced_note = (f"   ({summary['predictions']['displaced']} of them displaced calls)"
+                      if summary["predictions"].get("displaced") else "")
     lines.append(f"  unmatched predictions: {summary['predictions']['unmatched']} of "
-                 f"{summary['predictions']['total']}")
+                 f"{summary['predictions']['total']}{displaced_note}")
     lines.append(f"  locus precision      : {_pct(summary['predictions']['precision'])}"
-                 "   (prediction records matching a simulated locus)")
+                 "   (prediction records correctly placed on a simulated locus)")
 
     offsets = overall["breakpoint_offset_bp"]
     errors = overall["allele_length_error_bp"]
@@ -890,10 +984,15 @@ class Evaluator:
 
         summary = OrderedDict()
         summary["overall"] = aggregate(scored)
+        # A displaced call stays unmatched: it found a locus but put the breakpoint a
+        # whole solo LTR away, so it is not a correct prediction and precision must not
+        # credit it. Counted separately so it is not read as a spurious call either.
+        n_displaced_calls = sum(1 for r in unmatched_records if r.displaced_for is not None)
         summary["predictions"] = OrderedDict([
             ("total", len(records)),
             ("matched", matched),
             ("unmatched", unmatched),
+            ("displaced", n_displaced_calls),
             ("precision", round(matched / len(records), 4) if records else None),
         ])
         # Counted per event class, not per record: an element inserted and later excised is
@@ -1063,6 +1162,14 @@ def unmatched_payload(record, scored):
         ("allele_bp", event_size(record.alt_descs)),
         ("carriers", OrderedDict([("predicted", carriers)])),
         ("nearest_simulated_locus", nearest_event(record, scored)),
+        # Set when this call did find a simulated locus, one solo LTR downstream of where
+        # it should have anchored. Recorded so it is not mistaken for a spurious call.
+        ("displaced_match_for", None if record.displaced_for is None else OrderedDict([
+            ("chrom", record.displaced_for.chrom),
+            ("pos", record.displaced_for.pos),
+            ("id", record.displaced_for.id),
+            ("pos_offset", record.pos - record.displaced_for.pos),
+        ])),
     ])
 
 
