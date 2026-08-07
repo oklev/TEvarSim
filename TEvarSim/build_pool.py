@@ -383,20 +383,27 @@ class RandomTE:
                     name += "-FULL"
                 class_fam = next(iter(match_class_fam))
             repClass = class_fam.split("/")[0]
+            # An LTR element is bounded by its own LTR-I-LTR structure, not by the extent of
+            # RepeatMasker's ID group, which can have an adjacent solo LTR folded into it
+            # depending on the library. Narrow the span here, before anything is built from
+            # it, so the deletion and the excision describe the same element: deleting a
+            # neighbouring relic along with the element is the same error as excising it.
+            ltr_len = None
+            if is_full_ltr:
+                core = ltr_element_core(te_info)
+                if core is not None:
+                    start, end, ltr_len = core
+                    # The narrowed element can fall under --DELlen where the ID group did not.
+                    if end - start < self.DELlen:
+                        continue
             if repClass in self.TEtype:
                 teID = f"DEL-{chrom}-{start}-{end}-{class_fam}-{name}"
                 self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
-                if is_full_ltr:
-                    # Bound the element by its own LTR-I-LTR structure rather than by the
-                    # extent of RepeatMasker's ID group, which can have an adjacent solo LTR
-                    # folded into it. The solo LTR left behind spans [start, start+ltr_len).
-                    core = ltr_element_core(te_info)
-                    if core is not None:
-                        exc_start, exc_end, ltr_len = core
-                        if 0 < ltr_len < exc_end - exc_start:
-                            exc_id = f"EXC-{chrom}-{exc_start}-{exc_end}-{ltr_len}-{class_fam}-{name}"
-                            self.EXC.append((chrom, exc_start, exc_end, exc_id, repClass,
-                                             "EXC", strand, ltr_len))
+                # The solo LTR left behind spans [start, start+ltr_len).
+                if ltr_len is not None and 0 < ltr_len < end - start:
+                    exc_id = f"EXC-{chrom}-{start}-{end}-{ltr_len}-{class_fam}-{name}"
+                    self.EXC.append((chrom, start, end, exc_id, repClass,
+                                     "EXC", strand, ltr_len))
     
     def parse_TEpool(self):
         self.INS = []
