@@ -46,6 +46,43 @@ class TEtype(list):
         else:
             return super().__contains__(other)
 
+# An element is only full-length if its INTERNAL region is. The LTR-I-LTR fragment pattern
+# alone is not enough: a decayed relic keeps recognisable LTRs long after its internal region
+# has gone, so RepeatMasker still lays down LTR / I / LTR and the pattern matches. One such
+# relic in DG4005 (chrVII_RagTag:400163) retains 355bp of a 5249bp internal region -- 6.8% --
+# and without this would be an eligible excision candidate, producing an "excision" of a
+# 1.6kb pseudo-element leaving a 280bp "solo LTR".
+MIN_INTERNAL_COVERAGE = 0.5
+
+
+def internal_is_full_length(te_info, threshold=MIN_INTERNAL_COVERAGE):
+    """Does this element's internal region cover enough of its consensus to be full-length?
+
+    Read from RepeatMasker's own repeat-coordinate columns, so no consensus FASTA is needed:
+    each fragment records where in the consensus it matched and how much was left over, which
+    together give the consensus length. Fragments are summed, since one internal region is
+    often reported in several pieces.
+
+    Returns True when the coverage cannot be determined, so a missing or malformed coordinate
+    never silently drops an element from the pool.
+    """
+    internal = [record for record in te_info if record[9][-2:] == "-I"]
+    if not internal:
+        return False
+    covered = 0
+    consensus = 0
+    for record in internal:
+        begin, end, left = record[11], record[12], record[13]
+        if begin is None or end is None:
+            return True
+        covered += max(0, end - begin + 1)
+        if left is not None:
+            consensus = max(consensus, end + abs(left))
+    if not consensus:
+        return True
+    return covered / consensus >= threshold
+
+
 class RandomTE:
     def __init__(self, args):
         self.pool_fasta = args.outprefix + ".fa"
@@ -254,6 +291,19 @@ class RandomTE:
                     line[8] = "-"
                 for i in (5,6,14):
                     line[i] = int(line[i])
+                # Repeat (consensus) coordinates, used to tell a full-length element from a
+                # relic that has kept its LTRs. RepeatMasker writes these as
+                # "begin end (left)" on +, and "(left) end begin" on C, so put them back in
+                # order before use. Parentheses are stripped; a malformed field is left None.
+                begin, end, left = line[11], line[12], line[13]
+                if line[8] == "-":
+                    begin, left = left, begin
+                try:
+                    line[11] = int(begin.strip("()"))
+                    line[12] = int(end.strip("()"))
+                    line[13] = int(left.strip("()"))
+                except (ValueError, AttributeError):
+                    line[11] = line[12] = line[13] = None
                 if line[14] not in repeatmasker_records:
                     repeatmasker_records[line[14]] = []
                 repeatmasker_records[line[14]].append(line)
@@ -294,7 +344,9 @@ class RandomTE:
                 name = "|".join(matches)
                 # Full-length LTR element: an internal (-I) region flanked by two LTR (-LTR)
                 # fragments. These are the elements eligible for LTR-LTR recombination (excision).
-                is_full_ltr = bool(ty_i) and te_info[0][9][-4:] == "-LTR" and te_info[-1][9][-4:] == "-LTR"
+                is_full_ltr = (bool(ty_i) and te_info[0][9][-4:] == "-LTR"
+                               and te_info[-1][9][-4:] == "-LTR"
+                               and internal_is_full_length(te_info))
                 if is_full_ltr:
                     name += "-FULL"
                 class_fam = next(iter(match_class_fam))
