@@ -74,6 +74,19 @@ def ltr_element_core(te_info):
 
     Returns (start, end, ltr_len), or None if the group is not LTR-I-LTR shaped.
     """
+    bounding = bounding_ltrs(te_info)
+    if bounding is None:
+        return None
+    five_prime, three_prime = bounding
+    return five_prime[5], three_prime[6], five_prime[6] - five_prime[5]
+
+
+def bounding_ltrs(te_info):
+    """The two LTR fragments an element's internal region sits between, or None.
+
+    The last LTR before the internal region and the first one after it -- not the first and
+    last fragments in RepeatMasker's ID group, which may include a neighbour it folded in.
+    """
     ordered = sorted(te_info, key=lambda record: record[5])
     internal = [i for i, record in enumerate(ordered) if record[9][-2:] == "-I"]
     if not internal:
@@ -82,9 +95,38 @@ def ltr_element_core(te_info):
     after = [i for i in range(internal[-1] + 1, len(ordered)) if ordered[i][9][-4:] == "-LTR"]
     if not before or not after:
         return None
-    five_prime = ordered[before[-1]]        # the LTR the internal region begins after
-    three_prime = ordered[after[0]]         # the LTR it ends at, not the last in the group
-    return five_prime[5], three_prime[6], five_prime[6] - five_prime[5]
+    return ordered[before[-1]], ordered[after[0]]
+
+
+# How far apart the two LTRs' divergences may be, in percentage points, for the element to
+# be excisable.
+MAX_LTR_DIVERGENCE_DIFFERENCE = 5.0
+
+
+def ltrs_can_recombine(te_info, tolerance=MAX_LTR_DIVERGENCE_DIFFERENCE):
+    """Are this element's two LTRs alike enough to recombine with each other?
+
+    An excision is LTR-LTR recombination, so it needs homology between the two LTRs -- this
+    is a requirement of the mechanism, not a data-quality filter. An element whose LTRs have
+    drifted apart cannot recombine them, however well each one matches a consensus.
+
+    Divergence from the consensus is the available proxy: two LTRs that are both close to it
+    are close to each other, and a large gap between them means at least one has drifted.
+    It is only a proxy -- two LTRs equally divergent from the consensus could still differ
+    from each other -- so the tolerance is loose, meant to reject the clearly implausible
+    rather than to measure recombination potential.
+
+    Returns True when divergence cannot be read, so a malformed column never silently drops
+    an element.
+    """
+    bounding = bounding_ltrs(te_info)
+    if bounding is None:
+        return False
+    try:
+        divergences = [float(record[1]) for record in bounding]
+    except (TypeError, ValueError):
+        return True
+    return abs(divergences[0] - divergences[1]) <= tolerance
 
 
 def internal_is_full_length(te_info, threshold=MIN_INTERNAL_COVERAGE):
@@ -399,8 +441,12 @@ class RandomTE:
             if repClass in self.TEtype:
                 teID = f"DEL-{chrom}-{start}-{end}-{class_fam}-{name}"
                 self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
-                # The solo LTR left behind spans [start, start+ltr_len).
-                if ltr_len is not None and 0 < ltr_len < end - start:
+                # The solo LTR left behind spans [start, start+ltr_len). Excision is
+                # recombination between the two LTRs, so they have to be alike enough to
+                # recombine -- an element whose LTRs have drifted apart is still deletable,
+                # just not excisable.
+                if (ltr_len is not None and 0 < ltr_len < end - start
+                        and ltrs_can_recombine(te_info)):
                     exc_id = f"EXC-{chrom}-{start}-{end}-{ltr_len}-{class_fam}-{name}"
                     self.EXC.append((chrom, start, end, exc_id, repClass,
                                      "EXC", strand, ltr_len))
