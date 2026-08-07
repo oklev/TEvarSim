@@ -55,6 +55,38 @@ class TEtype(list):
 MIN_INTERNAL_COVERAGE = 0.5
 
 
+def ltr_element_core(te_info):
+    """The LTR-I-LTR span of a full-length LTR element, and its 5' LTR length.
+
+    RepeatMasker groups fragments by its ID column, and that group can hold more than the
+    element: an adjacent solo LTR gets folded in whenever it resembles the element's own
+    LTRs closely enough for RepeatMasker to join them. Whether it does depends on the
+    library -- with Ty2 present the introduced Ty1c element's LTRs match TY2-LTR at 4%
+    while the neighbouring relic matches TY1-LTR at 20%, so they stay apart; with a
+    Ty1-only library both become TY1-LTR at 12.6% and 20.1% and RepeatMasker joins them.
+    Taking min(start)/max(end) over the group then overshoots the element by that
+    neighbour, and an excision built from it removes 309bp too much.
+
+    An element is LTR-I-LTR: three fragments, not four. So bound it structurally instead --
+    the last LTR before the internal region, and the first LTR after it. That is the same
+    answer under either library, since it reads the element's own composition rather than
+    how well its LTRs happen to score.
+
+    Returns (start, end, ltr_len), or None if the group is not LTR-I-LTR shaped.
+    """
+    ordered = sorted(te_info, key=lambda record: record[5])
+    internal = [i for i, record in enumerate(ordered) if record[9][-2:] == "-I"]
+    if not internal:
+        return None
+    before = [i for i in range(internal[0]) if ordered[i][9][-4:] == "-LTR"]
+    after = [i for i in range(internal[-1] + 1, len(ordered)) if ordered[i][9][-4:] == "-LTR"]
+    if not before or not after:
+        return None
+    five_prime = ordered[before[-1]]        # the LTR the internal region begins after
+    three_prime = ordered[after[0]]         # the LTR it ends at, not the last in the group
+    return five_prime[5], three_prime[6], five_prime[6] - five_prime[5]
+
+
 def internal_is_full_length(te_info, threshold=MIN_INTERNAL_COVERAGE):
     """Does this element's internal region cover enough of its consensus to be full-length?
 
@@ -355,11 +387,16 @@ class RandomTE:
                 teID = f"DEL-{chrom}-{start}-{end}-{class_fam}-{name}"
                 self.DEL.append((chrom, start, end, teID, repClass,"DEL",strand))
                 if is_full_ltr:
-                    # 5' LTR fragment length; the solo LTR left behind spans [start, start+ltr_len).
-                    ltr_len = te_info[0][6] - te_info[0][5]
-                    if 0 < ltr_len < end - start:
-                        exc_id = f"EXC-{chrom}-{start}-{end}-{ltr_len}-{class_fam}-{name}"
-                        self.EXC.append((chrom, start, end, exc_id, repClass, "EXC", strand, ltr_len))
+                    # Bound the element by its own LTR-I-LTR structure rather than by the
+                    # extent of RepeatMasker's ID group, which can have an adjacent solo LTR
+                    # folded into it. The solo LTR left behind spans [start, start+ltr_len).
+                    core = ltr_element_core(te_info)
+                    if core is not None:
+                        exc_start, exc_end, ltr_len = core
+                        if 0 < ltr_len < exc_end - exc_start:
+                            exc_id = f"EXC-{chrom}-{exc_start}-{exc_end}-{ltr_len}-{class_fam}-{name}"
+                            self.EXC.append((chrom, exc_start, exc_end, exc_id, repClass,
+                                             "EXC", strand, ltr_len))
     
     def parse_TEpool(self):
         self.INS = []
