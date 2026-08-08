@@ -98,6 +98,29 @@ def bounding_ltrs(te_info):
     return ordered[before[-1]], ordered[after[0]]
 
 
+def ltrs_agree_on_strand(te_info):
+    """Are this element's two bounding LTRs on the same strand?
+
+    An LTR retrotransposon's LTRs are DIRECT repeats -- same sequence, same orientation --
+    because the element is one transcriptional unit and both LTRs are copies of the same
+    end. Two LTRs facing each other are not one element's ends; they are an inverted pair,
+    or two unrelated LTRs RepeatMasker bridged across whatever lies between them, and the
+    LTR-I-LTR shape is coincidental rather than structural.
+
+    It also rules the span out of excision on mechanism: LTR-LTR recombination needs the
+    two repeats aligned in the same direction. An inverted pair recombines to an inversion,
+    not to a solo LTR.
+
+    Returns True when the LTRs cannot be identified, leaving that judgement to
+    ``bounding_ltrs``, which is the check that owns it.
+    """
+    bounding = bounding_ltrs(te_info)
+    if bounding is None:
+        return True
+    five_prime, three_prime = bounding
+    return five_prime[8] == three_prime[8]
+
+
 # How far apart the two LTRs' divergences may be, in percentage points, for the element to
 # be excisable.
 MAX_LTR_DIVERGENCE_DIFFERENCE = 5.0
@@ -420,7 +443,8 @@ class RandomTE:
                 # fragments. These are the elements eligible for LTR-LTR recombination (excision).
                 is_full_ltr = (bool(ty_i) and te_info[0][9][-4:] == "-LTR"
                                and te_info[-1][9][-4:] == "-LTR"
-                               and internal_is_full_length(te_info))
+                               and internal_is_full_length(te_info)
+                               and ltrs_agree_on_strand(te_info))
                 if is_full_ltr:
                     name += "-FULL"
                 class_fam = next(iter(match_class_fam))
