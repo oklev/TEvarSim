@@ -96,8 +96,14 @@ class Simulator:
                 "col_index":0,
                 "start":0
             }
-        prev_start = -1
-        prev_end = -1
+        # Ordering and overlap are properties of ONE CONTIG's event list, not of the file as a
+        # whole: the events are bucketed per contig just below, and generate_genome walks each
+        # bucket with its own cursor into that contig's sequence. So the previous event is
+        # tracked per contig -- held globally, these checks would reject a bed sorted by contig
+        # and then by position, which is exactly what TErandom writes, at every contig boundary.
+        # A bed whose contigs are interleaved is still accepted, so long as each contig's own
+        # events ascend and none of them overlap.
+        previous = {}
         for event in self.TEevents:
             chrom = event["chrom"]
             start = event["start"]
@@ -108,10 +114,21 @@ class Simulator:
                 raise ValueError(f"Contig not found in reference: {chrom}")
             if start < 0 or end > self.CHR[chrom]["len"]:
                 raise ValueError(f"TE event out of genome bounds. Position: {chrom}\t{start}\t{end}")
+            prev_start, prev_end = previous.get(chrom, (-1, -1))
+            # Unsorted is diagnosed before overlapping because it is the more likely cause and
+            # the more useful thing to be told: an out-of-order event always overlaps the one
+            # before it as well, so the overlap message alone would point at a symptom.
             if start < prev_start:
-                raise ValueError(f"bed file not be sorted by start position. Position: {start}")
+                raise ValueError(
+                    f"bed file is not sorted by start position within a contig. "
+                    f"Position: {chrom}\t{start}, which follows {prev_start}")
+            # An insertion is a point event (start == end), so two of them at the same position
+            # are adjacent rather than overlapping and the comparison stays strict.
             if start < prev_end:
-                raise ValueError(f"Overlapping TE events detected. Position: {start}")
+                raise ValueError(
+                    f"Overlapping TE events detected. Position: {chrom}\t{start}, which "
+                    f"starts inside the event ending at {prev_end}")
+            previous[chrom] = (start, end)
             self.CHR[chrom]["events"].append(event)
 
     def _parse_bed(self):
