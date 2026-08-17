@@ -44,6 +44,7 @@ from .compare_vcf import (
     parse_te_ids,
     resolve_alleles,
 )
+from .report import STRATUM_TITLES, write_report
 
 # Size strata, in bp of net length change. The defaults are chosen around the shapes an LTR
 # simulation produces: a solo LTR (~340 bp), a full-length element (~6 kb) and a stacked
@@ -78,6 +79,27 @@ class Locus:
         self.alt_descs = alt_descs  # every non-reference allele of the record
         self.match = None           # the prediction record paired with this locus
         self.displaced = None       # a call that found it, but one solo LTR downstream
+        self.index = None           # position in the truth file
+
+
+class VcfRow:
+    '''
+    One record of a file as it stands in that file, whether or not it was scored.
+
+    The report shows truth and prediction side by side, whole, so a record that never
+    became a Locus still needs a row: dropping the ones a ``--TEtype`` filter removed would
+    make the file look like a smaller simulation than it is, and dropping the prediction's
+    all-reference records would hide that the caller emitted them. ``scored`` is the Locus
+    or PredRecord this row became, or None with ``skipped`` naming why it became nothing.
+    '''
+
+    def __init__(self, index, chrom, pos, text, scored=None, skipped=None):
+        self.index = index      # position in the file, which is what the report keys on
+        self.chrom = chrom
+        self.pos = pos
+        self.text = text
+        self.scored = scored
+        self.skipped = skipped
 
 
 class PredRecord:
@@ -94,7 +116,9 @@ class PredRecord:
         self.alt_descs = alt_descs
         self.nonvariant = nonvariant  # allele indices that mean "no variant here"
         self.matched = False
+        self.matched_for = None       # the locus this call was paired with
         self.displaced_for = None     # the locus this call found at the wrong anchor
+        self.index = None             # position in the prediction file
 
 
 # ---- loading -----------------------------------------------------------------
@@ -264,6 +288,9 @@ def load_truth_events(vcf_file, INSonly, TEtype):
     Mirrors ``Compare``'s ``--TEtype``/``--INSonly`` filtering, including its refusal to run
     against a family that is not in the file: filtering to a family that does not exist
     yields an empty benchmark whose 0% detection rate says nothing about the prediction.
+
+    Returns (events, samples, rows), where ``rows`` is every record of the file in order --
+    the ones the filters dropped included -- so the report can show the file whole.
     '''
     vcf = pysam.VariantFile(vcf_file)
     samples = list(vcf.header.samples)
@@ -272,15 +299,21 @@ def load_truth_events(vcf_file, INSonly, TEtype):
     wanted = TEtype.casefold() if TEtype is not None else None
     seen_families = set()
     events = []
-    for record in vcf:
+    rows = []
+    for index, record in enumerate(vcf):
         varID = record.id or f"{record.chrom}:{record.pos}"
         info = dict(record.info)
         etype = event_type(record, info)
+        text = str(record).rstrip("\n")
         if INSonly and etype != "INS":
+            rows.append(VcfRow(index, record.chrom, record.pos, text,
+                               skipped=f"not an insertion ({etype}); dropped by --INSonly"))
             continue
         family, superfamily = parse_te_ids(varID)
         seen_families.add(family)
         if wanted is not None and family.casefold() != wanted:
+            rows.append(VcfRow(index, record.chrom, record.pos, text,
+                               skipped=f"family {family}; dropped by --TEtype {TEtype}"))
             continue
         gts, descs = {}, {}
         for sample in samples:
@@ -295,13 +328,16 @@ def load_truth_events(vcf_file, INSonly, TEtype):
         event.history = event_history(record, info)
         event.alt_events = alt_event_types(record, info)
         event.size = event_size(alt_descs)
+        event.index = index
+        event.text = text
         events.append(event)
+        rows.append(VcfRow(index, record.chrom, record.pos, text, scored=event))
     if wanted is not None and not any(f.casefold() == wanted for f in seen_families):
         raise ValueError(
             f"--TEtype '{TEtype}' matches no TE family in {vcf_file}. "
             f"Families present: {', '.join(sorted(seen_families))}. "
             "Note --TEtype matches the family (e.g. TY1-FULL), not the superfamily (Copia).")
-    return events, samples
+    return events, samples, rows
 
 
 def load_pred_vcf(vcf_file):
@@ -311,11 +347,15 @@ def load_pred_vcf(vcf_file):
     A record all of whose samples are reference (or ``<*>``, the "no variant in this
     genome" allele) describes nothing that could match a simulated event, and counting it
     among the predictions would deflate precision for free.
+
+    Returns (records, samples, rows), where ``rows`` is every record of the file in order,
+    including the all-reference ones no prediction was read from.
     '''
     vcf = pysam.VariantFile(vcf_file)
     samples = list(vcf.header.samples)
     records = []
-    for record in vcf:
+    rows = []
+    for index, record in enumerate(vcf):
         nonvariant = {0}
         if record.alts and "<*>" in record.alts:
             nonvariant.add(record.alts.index("<*>") + 1)
@@ -328,14 +368,20 @@ def load_pred_vcf(vcf_file):
             descs[sample] = resolve_alleles(record.ref, record.alts, gt)
             if any(a is not None and a not in nonvariant for a in gt):
                 called = True
+        text = str(record).rstrip("\n")
         # A sample-less VCF (a sites-only call set) still describes predictions; keep it.
         if samples and not called:
+            rows.append(VcfRow(index, record.chrom, record.pos, text,
+                               skipped="no sample calls this a variant"))
             continue
         alt_descs = alt_descriptors(record.ref, record.alts, skip=("<*>",))
-        records.append(PredRecord(record.chrom, record.pos, record.id or ".", record.ref,
-                                  tuple(record.alts or ()), gts, descs, alt_descs,
-                                  nonvariant))
-    return records, samples
+        pred = PredRecord(record.chrom, record.pos, record.id or ".", record.ref,
+                          tuple(record.alts or ()), gts, descs, alt_descs, nonvariant)
+        pred.index = index
+        pred.text = text
+        records.append(pred)
+        rows.append(VcfRow(index, record.chrom, record.pos, text, scored=pred))
+    return records, samples, rows
 
 
 def load_pred_bed(bed_file):
@@ -344,15 +390,20 @@ def load_pred_bed(bed_file):
     can only be scored at the locus level: detection and breakpoint offset, no genotypes.
     '''
     records = []
+    rows = []
     with open(bed_file) as fin:
-        for line in fin:
+        for index, line in enumerate(fin):
             if line.startswith("#") or not line.strip():
                 continue
             fields = line.split()
             chrom, start = fields[0], int(fields[1])
             varID = fields[3] if len(fields) > 3 else "."
-            records.append(PredRecord(chrom, start, varID, None, (), {}, {}, (), {0}))
-    return records, []
+            pred = PredRecord(chrom, start, varID, None, (), {}, {}, (), {0})
+            pred.index = index
+            pred.text = line.rstrip("\n")
+            records.append(pred)
+            rows.append(VcfRow(index, chrom, start, pred.text, scored=pred))
+    return records, [], rows
 
 
 # ---- sample pairing ----------------------------------------------------------
@@ -460,6 +511,9 @@ def match_events(events, records, max_dist, tol):
         taken_records.add((chrom, j))
         events[i].match = by_chrom[chrom][j]
         by_chrom[chrom][j].matched = True
+        # The pairing is read from both ends by the side-by-side viewer, which has to get
+        # from a prediction back to the locus that claimed it as well as the other way.
+        by_chrom[chrom][j].matched_for = events[i]
     match_displaced(events, by_chrom, taken_events, taken_records, max_dist, tol)
 
 
@@ -914,13 +968,7 @@ def format_report(summary, meta):
         if len(unsupported) > 5:
             lines.append(f"  ... and {len(unsupported) - 5} more")
 
-    for title, key in (("By event type", "by_event_type"),
-                       ("By event history", "by_event_history"),
-                       ("By TE family", "by_family"),
-                       ("By TE superfamily", "by_superfamily"),
-                       ("By event size", "by_size"),
-                       ("By allele frequency", "by_allele_frequency"),
-                       ("By number of carrier genomes", "by_carrier_count")):
+    for title, key in STRATUM_TITLES:
         strata = summary.get(key)
         if not strata:
             continue
@@ -952,6 +1000,7 @@ class Evaluator:
         self.sample_map_file = getattr(args, "sample_map", None)
         self.size_bins = tuple(getattr(args, "size_bins", None) or DEFAULT_SIZE_BINS)
         self.af_bins = tuple(getattr(args, "af_bins", None) or DEFAULT_AF_BINS)
+        self.no_html = getattr(args, "no_html", False)
 
     def _run(self):
         # Ground truth. --nHap merges consecutive haplotype columns into one individual,
@@ -960,19 +1009,25 @@ class Evaluator:
         if self.nHap > 1:
             truth_file = f"{self.outprefix}.polyhap.vcf"
             convert_to_ploidy(self.truth_file, self.nHap, truth_file)
-        events, truth_samples = load_truth_events(truth_file, self.INSonly, self.TEtype)
+        events, truth_samples, truth_rows = load_truth_events(
+            truth_file, self.INSonly, self.TEtype)
 
         if self.predType == "VCF":
-            records, pred_samples = load_pred_vcf(self.pred_file)
+            records, pred_samples, pred_rows = load_pred_vcf(self.pred_file)
         else:
-            records, pred_samples = load_pred_bed(self.pred_file)
+            records, pred_samples, pred_rows = load_pred_bed(self.pred_file)
 
         sample_map = read_sample_map(self.sample_map_file) if self.sample_map_file else None
         pairs, pairing = pair_samples(truth_samples, pred_samples, sample_map)
 
         match_events(events, records, self.max_dist, self.gt_len_tol)
-        scored = [score_event(event, pairs, self.gt_len_tol)
-                  for event in sorted(events, key=lambda e: (e.chrom, e.pos))]
+        ordered = sorted(events, key=lambda e: (e.chrom, e.pos))
+        scored = [score_event(event, pairs, self.gt_len_tol) for event in ordered]
+        # Which record of the truth file each scored locus came from, in the same order.
+        # Kept beside the scored loci rather than inside them: the report links a locus to
+        # its record with it, and it is a fact about this file rather than about the locus,
+        # so it has no business in the JSON a locus is written to.
+        locus_rows = [event.index for event in ordered]
 
         unmatched_records = [r for r in records if not r.matched]
         matched = len(records) - len(unmatched_records)
@@ -1078,6 +1133,15 @@ class Evaluator:
             json.dump(OrderedDict([("meta", meta), ("summary", summary),
                                    ("loci", scored)]), fo, indent=2)
             fo.write("\n")
+        # The HTML report shows the shape the summary can only average: the per-locus
+        # breakpoint and length errors as distributions, and which sizes were missed.
+        html_path = None
+        if not self.no_html:
+            html_path = write_report(f"{self.outprefix}.html", meta, summary, scored,
+                                     locus_dir=locus_dir, summary_file=out_path,
+                                     truth_rows=truth_rows, pred_rows=pred_rows,
+                                     locus_rows=locus_rows)
+
         # Flush first: the report goes to a block-buffered stdout when it is piped, and the
         # unbuffered stderr note would otherwise land above a report it comes after.
         sys.stdout.flush()
@@ -1087,12 +1151,18 @@ class Evaluator:
               f"predictions"
               + (f"; {removed} stale file(s) replaced)" if removed else ")"),
               file=sys.stderr)
+        if html_path:
+            print(f"[INFO] HTML report written to {html_path}", file=sys.stderr)
 
         self.meta = meta
         self.summary = summary
         self.loci = scored
         self.locus_dir = locus_dir
         self.locus_files = names
+        self.html_file = html_path
+        self.truth_rows = truth_rows
+        self.pred_rows = pred_rows
+        self.locus_rows = locus_rows
         return self
 
 

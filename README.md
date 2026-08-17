@@ -275,7 +275,8 @@ the events and so total more than the loci. No genome is named on the command li
 **Optional arguments:**
 - `predType` : Type of the predicted file (VCF or BED, default: VCF). A BED prediction carries no
   allele sequences and no sample columns, so only detection and breakpoint accuracy are reported
-- `outprefix` : Output prefix for the per-locus JSON (default: `evaluate`)
+- `outprefix` : Output prefix for the per-locus JSON and the HTML report (default: `evaluate`)
+- `no_html` : Skip the HTML report; write only the text summary, the JSON and the per-locus files
 - `sample_map` : Two-column file pairing truth and prediction samples (`truth_sample<TAB>pred_sample`).
   Default: pair samples by name
 - `TEtype` : TE family in truth VCF to consider, e.g. `TY1-FULL` (case-insensitive). This is the
@@ -334,7 +335,9 @@ proximity. That is what keeps a stacked pair of elements honest: two elements at
 prediction records for both to count as recovered, rather than both claiming the single record that
 happens to sit there.
 
-**Output.** `--outprefix` writes two things:
+**Output.** `--outprefix` writes three things:
+
+- `<outprefix>.html` — the report. See below; pass `--no_html` to skip it.
 
 - `<outprefix>.json` — the run's parameters, the aggregate summary, and one object per simulated
   locus, so results can be reloaded for plotting or regression checks.
@@ -347,6 +350,47 @@ happens to sit there.
   strip its `run` and `kind` keys and what is left is exactly that locus's entry in the summary's
   `loci` list, which also carries a `locus_file` pointing back at it. Files left by an earlier run
   of the same prefix are cleared first, so the directory only ever describes the current run.
+
+**The HTML report.** `<outprefix>.html` shows the shape the text summary can only average.
+"Breakpoint offset: mean +0.07 bp, SD 0.60 bp" cannot separate a caller that is exact on every
+locus but 30 bp out on two of them from one that scatters a base either side of the truth on all
+of them; those are different problems, and only the distribution tells them apart. The page holds
+
+- **breakpoint resolution** — the signed error of every correctly placed call as a histogram,
+  centred so an exact call gets a bar of its own and symmetric about zero so a bias reads as an
+  off-centre mass, beside the cumulative `exact / within N bp` readout;
+- **allele length accuracy** — the same for the called allele's length, which is where a
+  well-placed call that truncated the element shows up;
+- **recovery by event size** — every simulated locus at the size it was simulated at, each column
+  split into correctly placed / displaced / missed, so a sensitivity floor at a particular element
+  size (the solo LTRs, typically) is visible instead of averaged away;
+- **the breakdowns** — recovery rate, carrier F1 and genotype concordance as grouped bars beside
+  the same sortable tables the text report prints;
+- **truth and prediction side by side** — a second tab, reached by clicking either VCF's file name
+  in the heading, or any locus named in a figure's table. Both files whole, in two panes. Clicking a record jumps
+  the other pane to the record it was paired with and marks both; where a record has no partner,
+  the other pane says so rather than sitting still, since "there is nothing there" and "the viewer
+  did nothing" look identical in a pane that fails to move. Scrolling either pane carries the
+  other to the same *relative* position, so two files of different lengths stay roughly aligned
+  without pretending to a record-for-record correspondence they do not have. Records the filters
+  dropped, and prediction records no sample calls, are kept and marked unscored — omitting them
+  would show a smaller run than the one that happened. Allele sequences over 24 bp are shown as
+  their first bases and their length; a 6 kb ALT per record would otherwise put megabytes of
+  sequence in the page.
+
+Each figure also carries the table of values behind it, naming the loci in every bar by
+`chrom:pos` — the same key the per-locus JSON files are named after, so a bar leads to the loci
+that made it, and each of those to its own file and to its record in the viewer.
+
+The tabs are switched on by the page's own script: with JavaScript off it stays one long
+document where every link is an ordinary anchor that still resolves, rather than stranding the
+viewer behind a control that cannot be operated.
+
+The figures are modelled on the Tangram paper's benchmarking figures (Wu et al. 2014,
+*BMC Genomics* 15:795, Figures 1 and 2). Everything is generated in Python as inline SVG: there is
+no plotting dependency to install and nothing is fetched when the page is opened, so the report
+works over a mounted filesystem or copied off a cluster. It follows the browser's light/dark
+setting.
 
 **Note on the event-type breakdown.** A locus is counted under every event class in its history,
 so the rows total the events rather than the loci: an element that was inserted and later excised is

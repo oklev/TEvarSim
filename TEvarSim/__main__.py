@@ -252,7 +252,11 @@ def main():
                          "accuracy are reported")
     # Output
     Evaluate_parser.add_argument("--outprefix", "-O", type=str, default="evaluate",
-                    help="Output prefix for the per-event JSON (default: evaluate)")
+                    help="Output prefix for the per-event JSON and the HTML report "
+                         "(default: evaluate)")
+    Evaluate_parser.add_argument("--no_html", action="store_true",
+                    help="Skip the HTML report; write only the text summary, the JSON and "
+                         "the per-locus files")
     # Options
     Evaluate_parser.add_argument("--sample_map", "-S", type=Existing_File_Path, default=None,
                     help="Two-column file pairing truth and prediction samples "
