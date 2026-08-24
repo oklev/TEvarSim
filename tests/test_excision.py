@@ -64,7 +64,7 @@ def test_excision_simulate_end_to_end():
         args = _Args(ref=ref, pool=pool, bed=bed, outprefix=out, num=10,
                      af_min=0.4, af_max=0.6, tsd_min=5, tsd_max=20,
                      sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1,
-                     af_dist="uniform", af_mean=None, allow_zero_carriers=False)
+                     af_dist="uniform", af_mean=None, allow_zero_carriers=False, tsd_from_header=False)
         simulate.Simulator(args)._run()
 
         # ---- VCF ----
@@ -105,7 +105,7 @@ def test_vcf_declares_and_writes_eventtype_per_alt():
         args = _Args(ref=ref, pool=pool, bed=bed, outprefix=out, num=10,
                      af_min=0.4, af_max=0.6, tsd_min=5, tsd_max=20,
                      sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1,
-                     af_dist="uniform", af_mean=None, allow_zero_carriers=False)
+                     af_dist="uniform", af_mean=None, allow_zero_carriers=False, tsd_from_header=False)
         simulate.Simulator(args)._run()
 
         header, records = [], []

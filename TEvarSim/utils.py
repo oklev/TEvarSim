@@ -1,9 +1,67 @@
 import logging
 import numpy as np
 import random
+import re
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
+
+# ---------------- annotation carried on a FASTA header ----------------
+# The tag is matched at a word boundary so that an element whose NAME happens to contain
+# "TSD=" cannot be misread as an annotation. The value is grabbed loosely, as a run of
+# non-space, so that "TSD=" with nothing after it is caught as malformed rather than missed.
+_TSD_TAG = re.compile(r"(?:\A|\s)TSD=(\S*)")
+_TSD_VALUE = re.compile(r"\A(\d+)(?:-(\d+))?\Z")
+
+
+def description_tail(record) -> str:
+    """Whatever a FASTA header carries after the sequence ID, or "" if it carries nothing.
+
+    Biopython sets description to the WHOLE title line, ID included, so a record parsed from
+    ">copia#LTR/Copia TSD=5" has the id "copia#LTR/Copia" and the description
+    "copia#LTR/Copia TSD=5". Stripping the ID back off leaves the annotation on its own,
+    which is what can be copied onto a derived record without repeating the ID in its header.
+    """
+    if record.description.startswith(record.id):
+        return record.description[len(record.id):].strip()
+    return record.description.strip()
+
+
+def parse_tsd_tag(description: str, record_id: str = ""):
+    """The (min, max) TSD length a FASTA header asks for, or None if it asks for nothing.
+
+    Grammar, both bounds inclusive::
+
+        TSD=4       a fixed 4 bp duplication
+        TSD=5-15    a length drawn uniformly from 5..15
+        TSD=0       no duplication at all
+
+    Both forms are needed because TSD length is a fixed, mechanistic property for some clades
+    and a variable one for others. A cut-and-paste transposon's TSD is set by the stagger
+    between its transposase's two cuts, so hAT and P duplicate 8 bp and Tc1/mariner 2 bp every
+    time; a non-LTR element inserting by target-primed reverse transcription has no fixed
+    stagger and produces a spread. Helitrons copy in by rolling-circle replication and
+    duplicate nothing at all, hence TSD=0 -- a real value, not a missing one, which is why
+    absence has to be spelled None rather than 0.
+
+    A tag that is present but malformed raises rather than falling back: a header that meant
+    to say something about TSD and failed is a typo to fix, not a default to accept.
+    """
+    match = _TSD_TAG.search(description)
+    if match is None:
+        return None
+    where = f" in FASTA header {record_id!r}" if record_id else ""
+    value = _TSD_VALUE.match(match.group(1))
+    if value is None:
+        raise ValueError(f"Malformed TSD tag 'TSD={match.group(1)}'{where}; "
+                         f"expected TSD=<int> or TSD=<min>-<max>")
+    low = int(value.group(1))
+    high = int(value.group(2)) if value.group(2) is not None else low
+    if high < low:
+        raise ValueError(f"Inverted TSD tag 'TSD={match.group(1)}'{where}; "
+                         f"the minimum must not exceed the maximum")
+    return low, high
+
 
 # ---------------- sampling TE insertions with min distance ----------------
 def sample_TEins(regions, deletions, n: int, TEdistance: int, target_strands: list[str|None]):

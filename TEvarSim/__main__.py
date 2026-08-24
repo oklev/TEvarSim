@@ -227,6 +227,13 @@ def main():
                     help="Minimum TSD length (default: 5)")
     Simulate_parser.add_argument("--tsd-max", "-Y", type=int, default=20, 
                     help="Maximum TSD length (default: 20)")
+    Simulate_parser.add_argument("--tsd-from-header", action="store_true",
+                    help="Take each insertion's TSD length from a TSD= tag in its pool FASTA "
+                         "header, e.g. '>copia#LTR/Copia_3SNP TSD=5' or '... TSD=5-15' (both "
+                         "bounds inclusive; TSD=0 means no duplication). The tag comes from the "
+                         "--consensus library and is carried onto the pool by TErandom. "
+                         "Elements with no tag fall back to --tsd-min/--tsd-max. Applies to "
+                         "insertions only: deletions and excisions duplicate nothing")
     Simulate_parser.add_argument("--sense-strand-ratio", "-S", type=ratio, default=0.5, 
                     help="Proportion of TE variants in the sense strand (default: 0.5)")
     # Other

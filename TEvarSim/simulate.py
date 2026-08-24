@@ -1,6 +1,7 @@
 import re
 import numpy as np
 from Bio import SeqIO
+from .utils import description_tail, parse_tsd_tag
 from contextlib import ExitStack
 from traceback import format_exc
 import sys
@@ -65,6 +66,7 @@ class Simulator:
         self.af_max = args.af_max
         self.tsd_min = args.tsd_min
         self.tsd_max = args.tsd_max
+        self.tsd_from_header = args.tsd_from_header
         self.af_dist = args.af_dist
         self.af_mean = args.af_mean
         self.allow_zero_carriers = args.allow_zero_carriers
@@ -286,14 +288,40 @@ class Simulator:
         ref: reference sequence
         alt: variant sequence (including the result after TE insertion or deletion)"
         """
-        # TE pool
-        te_pool = {rec.id: rec.seq for rec in SeqIO.parse(self.pool_fasta, "fasta")}
+        # TE pool. The TSD tags are read into a dict of their own rather than folded into
+        # te_pool, so the KeyError handling below keeps working on the shape it expects.
+        te_pool = {}
+        te_tsd = {}
+        for rec in SeqIO.parse(self.pool_fasta, "fasta"):
+            te_pool[rec.id] = rec.seq
+            if self.tsd_from_header:
+                bounds = parse_tsd_tag(description_tail(rec), rec.id)
+                if bounds is not None:
+                    te_tsd[rec.id] = bounds
+        untagged = []
         for event in self.TEevents:
             chrom, start, end, te_id, strand = event["chrom"], event["start"], event["end"], event["te_id"], event["strand"]
-            # tsd length
+            # tsd length. Drawn unconditionally and overridden afterwards, rather than
+            # skipped, so that --tsd-from-header cannot move the global stream: an element
+            # whose header sets its own TSD still consumes the draw it would otherwise have
+            # used, leaving every later event -- including the deletions and excisions, which
+            # keep the flag-driven length -- exactly where it was. A header RANGE needs a
+            # number of its own, so it takes one from the auxiliary stream instead.
             tsd_len = np.random.randint(self.tsd_min, self.tsd_max + 1)
             if te_id.startswith("bg"):
+                # Background SVs are synthetic sequence with no element behind them, so they
+                # duplicate nothing. Checked before the header lookup so they neither pick up
+                # a tag nor turn up in the untagged warning: bgSV writes them into the pool
+                # with no description at all.
                 tsd_len = 0
+            elif self.tsd_from_header and event["type"] == "INS":
+                bounds = te_tsd.get(te_id)
+                if bounds is None:
+                    untagged.append(te_id)
+                elif bounds[0] == bounds[1]:
+                    tsd_len = bounds[0]
+                else:
+                    tsd_len = int(self._aux.integers(bounds[0], bounds[1] + 1))
             if event["type"] == "INS":
                 # bed file is 0-based
                 ref_allele = self.CHR[chrom]["seq"][start - 1]
@@ -335,6 +363,13 @@ class Simulator:
                 "ref": ref_allele,
                 "alt": alt_allele
             })
+        if untagged:
+            names = sorted(set(untagged))
+            shown = ", ".join(names[:3])
+            more = f" and {len(names) - 3} more" if len(names) > 3 else ""
+            print(f"[WARN] --tsd-from-header: {len(untagged)} insertion(s) from {len(names)} "
+                  f"pool record(s) carry no TSD= tag and fell back to --tsd-min/--tsd-max "
+                  f"({self.tsd_min}-{self.tsd_max}). Examples: {shown}{more}",file=sys.stderr)
     
     def _parse_te_modification(self, te_id: str):
         """

@@ -112,7 +112,8 @@ tevarsim <subcommand> [options]
 Generate pTE position from known deletion sites and random TE insertion.
 
 **Required arguments:**
-- `consensus` : Path to the TE consensus FASTA file. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu
+- `consensus` : Path to the TE consensus FASTA file. Headers may carry a `TSD=` tag after the
+  sequence ID (see `Simulate --tsd-from-header`); it is propagated to the TE pool. The sequenceIDs in the FASTA header should be >TEname#class/superfamily, e.g., >AluY#SINE/Alu
 - `ref` : Reference genome FASTA
   
 **Optional arguments:**
@@ -199,9 +200,40 @@ Simulate pTE insertions/deletions and generate VCF and modified genome FASTA.
   what a real TE landscape looks like; a flat draw makes most insertions shared
 - `af-mean` : Mean of that exponential. Required by `--af-dist exponential`, rejected without it
 - `allow-zero-carriers` : Keep events that no genome drew, instead of giving each one a carrier
-- `tsd-min / --tsd-max` : Min/max TSD length (default: 5/20)  
+- `tsd-min / --tsd-max` : Min/max TSD length, used for every element that does not state its
+  own (default: 5/20)
+- `tsd-from-header` : Take each insertion's TSD length from a `TSD=` tag on its pool FASTA header
 - `sense-strand-ratio` : Proportion of sense-strand insertions (default: 0.5)  
 - `seed` : Random seed (default: None)  
+
+**Per-element TSD.** TSD length is a property of the clade, not a constant: a cut-and-paste
+transposon's TSD is set by the stagger between its transposase's two cuts, so hAT and P
+duplicate 8 bp and Tc1/mariner 2 bp every time, while a non-LTR element inserting by
+target-primed reverse transcription has no fixed stagger and produces a spread, and a Helitron
+copies in by rolling-circle replication and duplicates nothing. One `--tsd-min`/`--tsd-max`
+range for a whole library cannot say that, so an element can state its own in its library
+header:
+
+```
+>copia#LTR/Copia TSD=5
+>P-element#DNA/P TSD=8
+>Bari1#DNA/Tc1-Mariner TSD=2
+>Helitron#RC/Helitron TSD=0
+>jockey#LINE/Jockey TSD=5-15
+```
+
+`TSD=N` is a fixed length and `TSD=N-M` an inclusive range drawn uniformly; `TSD=0` means no
+duplication, which is a real value rather than a missing one. The tag lives in the description
+-- everything after the sequence ID -- so it does not disturb the `TEname#class/superfamily`
+grammar. `TErandom` copies it from `--consensus` onto every pool record it writes, including
+the synthesised `NAME-FULL` records, which take the `-LTR` part's tag. A tag that is present
+but malformed stops `TErandom`; that is the only command that reads the library, so it is the
+only place a typo can be caught.
+
+`Simulate --tsd-from-header` then uses it. Elements with no tag fall back to
+`--tsd-min`/`--tsd-max` and are named in a single warning. It applies to insertions only:
+deletions and excisions have no pool record and duplicate nothing, so their `INFO/TSD` remains
+a draw from the global range and remains meaningless.
 
 **Allele frequency.** `--af-dist exponential --af-mean M` draws each event's frequency from an
 exponential of mean `M`, truncated to `[--af-min, --af-max]`. Truncating an exponential from

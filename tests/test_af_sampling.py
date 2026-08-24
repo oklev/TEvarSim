@@ -66,7 +66,8 @@ def _args(d, bed_rows, **overrides):
     kw = dict(ref=ref, pool=pool, bed=bed, outprefix=os.path.join(d, "Sim"),
               num=8, af_min=0.1, af_max=0.9, tsd_min=5, tsd_max=20,
               sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1,
-              af_dist="uniform", af_mean=None, allow_zero_carriers=False)
+              af_dist="uniform", af_mean=None, allow_zero_carriers=False,
+              tsd_from_header=False)
     kw.update(overrides)
     return _Args(**kw)
 

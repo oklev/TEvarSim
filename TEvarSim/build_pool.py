@@ -5,7 +5,8 @@ import os
 from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
-from .utils import sample_TEins, bgSV, make_min_TE, pick_stranded
+from .utils import (sample_TEins, bgSV, make_min_TE, pick_stranded,
+                    description_tail, parse_tsd_tag)
 
 def is_dna(seq: Seq) -> bool:
     return set(str(seq)) <= set("ATGCN")
@@ -532,6 +533,10 @@ class TEPoolBuilder:
                 raise ValueError(f"Invalid characters found in {record.id}")
             if not check_TEid(record.id):
                 raise ValueError(f"Invalid format in TE ID: {record.id}. Please follow the format '>TEname#class/superfamily', e.g., '>AluY#SINE/Alu'")
+            # The library is the only file that carries an element's annotation, and this is
+            # the only command that reads it, so a malformed tag has to be caught here or it
+            # surfaces two commands later as a silent fallback to the global TSD flags.
+            parse_tsd_tag(description_tail(record), record.id)
             if record.id.split("#")[0][-2:] == "-I" or record.id.split("#")[0][-4:] == "-LTR":
                 id, class_fam = record.id.split("#")
                 ltr_name, ltr_part = id.rsplit("-",1)
@@ -547,16 +552,27 @@ class TEPoolBuilder:
                     internal_rec = ltr_parts["I"]
                     
                     new_id = f"{ltr_name}-FULL#{ltr_parts['class_fam']}"
+                    # The synthesised full-length element inherits the LTR part's annotation
+                    # rather than describing itself. A target site duplication is made by the
+                    # integration machinery cutting the host at the element's ends, so it is a
+                    # property of the LTR, and the -LTR record is where a library states it.
+                    # (The description this replaces said "Merged LTR-I-LTR sequence for X",
+                    # which never reached disk anyway: the pool writer below discarded it.)
                     new_record = SeqRecord(
                         ltr_rec.seq + internal_rec.seq + ltr_rec.seq,
                         id=new_id,
-                        description=f"Merged LTR-I-LTR sequence for {ltr_name}"
+                        description=description_tail(ltr_rec) or description_tail(internal_rec)
                     )
                     
                     parsed_records.append(new_record)
                 else:
-                    for part_rec in ltr_parts.values():
-                        parsed_records.append(part_rec)
+                    # An -I with no -LTR, or the reverse: emit the parts as themselves. The
+                    # dict also holds the class/family under "class_fam", which is a string
+                    # and not a record, so it has to be skipped -- appending it put a str
+                    # into the record list and crashed on .seq one loop later.
+                    for part, part_rec in ltr_parts.items():
+                        if part != "class_fam":
+                            parsed_records.append(part_rec)
             records = parsed_records
                     
 
@@ -587,7 +603,12 @@ class TEPoolBuilder:
             self.seqID_suffix = ""  # reset suffix each loop
             func_map[j]()
             new_id = f"{record.id}_{self.seqID_suffix}"
-            new_record = SeqRecord(Seq("".join(self.current_seq)), id=new_id, description="")
+            # The pool is the only file Simulate reads -- it never opens --consensus -- so
+            # anything the library said about an element has to survive into the pool header
+            # or it is lost. The ID picks up the modification suffix and so is no longer a
+            # prefix of the library description, hence carrying the tail separately.
+            new_record = SeqRecord(Seq("".join(self.current_seq)), id=new_id,
+                                   description=description_tail(record))
             out_records.append(new_record)
 
         # output
