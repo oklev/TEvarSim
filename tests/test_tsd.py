@@ -71,7 +71,8 @@ def _args(d, bed_rows, pool_records=((">elem#LTR/Copia", ELEMENT),), **overrides
     ref, pool, bed = _fixture(d, bed_rows, pool_records)
     kw = dict(ref=ref, pool=pool, bed=bed, outprefix=os.path.join(d, "Sim"),
               num=4, af_min=1.0, af_max=1.0, tsd_min=6, tsd_max=6,
-              sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1)
+              sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1,
+                 af_dist="uniform", af_mean=None, allow_zero_carriers=False)
     kw.update(overrides)
     return _Args(**kw)
 

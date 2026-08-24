@@ -56,7 +56,8 @@ def _simulator(d, bed_rows):
     ref, pool, bed = _fixture(d, bed_rows)
     args = _Args(ref=ref, pool=pool, bed=bed, outprefix=os.path.join(d, "Sim"),
                  num=4, af_min=0.5, af_max=0.5, tsd_min=0, tsd_max=0,
-                 sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1)
+                 sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1,
+                 af_dist="uniform", af_mean=None, allow_zero_carriers=False)
     sim = simulate.Simulator(args)
     sim._parse_bed()
     return sim

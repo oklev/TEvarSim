@@ -191,10 +191,32 @@ Simulate pTE insertions/deletions and generate VCF and modified genome FASTA.
 - `diverse` : Introduce sequence diversity among individuals for the same TE event, which is suitable for evaluating methods that require a TE panel as input(default: False)
 - `diverse_config` : Path to a configuration file for introducing sequence diversity among individuals for the same TE event (default: None; requires --diverse)
 - `outprefix` : Output prefix (default: Sim)  
-- `af-min / --af-max` : Min/max allele frequency (default: 0.1/0.9)  
+- `af-min / --af-max` : Bounds on the allele frequency of a simulated variant. Under the default
+  `--af-dist uniform` they are the range it is drawn flat from; under `--af-dist exponential`
+  they truncate the exponential (default: 0.1/0.9)
+- `af-dist` : `uniform` or `exponential` (default: `uniform`). An exponential gives a population
+  dominated by rare, largely private insertions with a thin tail of common ones, which is roughly
+  what a real TE landscape looks like; a flat draw makes most insertions shared
+- `af-mean` : Mean of that exponential. Required by `--af-dist exponential`, rejected without it
+- `allow-zero-carriers` : Keep events that no genome drew, instead of giving each one a carrier
 - `tsd-min / --tsd-max` : Min/max TSD length (default: 5/20)  
 - `sense-strand-ratio` : Proportion of sense-strand insertions (default: 0.5)  
 - `seed` : Random seed (default: None)  
+
+**Allele frequency.** `--af-dist exponential --af-mean M` draws each event's frequency from an
+exponential of mean `M`, truncated to `[--af-min, --af-max]`. Truncating an exponential from
+below also shifts it, so `--af-mean` is the mean *above* `--af-min` and the realised mean
+frequency is about `--af-min + --af-mean`. Keep `--af-min` near `1/--num`, or at 0, unless you
+mean to raise the floor. `--num` also bounds the resolution: with 20 genomes the smallest
+non-zero frequency is 0.05, so a much smaller `--af-mean` than that just collapses onto it.
+
+**Every event reaches a genome.** An event whose genotype draw gives no carrier used to be
+dropped from the VCF and from every genome without comment, so at low frequencies most of the
+pool evaporated -- exactly the regime that is supposed to produce private insertions. Such an
+event is now given one carrier, a genome chosen at random, and the count is reported. This
+applies to deletions and excisions as well as insertions: a requested event that reaches nobody
+is the same silent loss whatever its type. The realised minimum allele frequency is therefore
+`1/--num`. Pass `--allow-zero-carriers` for the old behaviour.
 
 **Event types in the output VCF** (`INFO/TYPE`):
 - `INS` : a TE insertion (point event; the inserted sequence comes from the TE pool).

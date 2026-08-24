@@ -203,6 +203,26 @@ def main():
                     help="Minimum allele frequency for simulated TE variants (default: 0.1)")
     Simulate_parser.add_argument("--af-max", "-X", type=ratio, default=0.9, 
                     help="Maximum allele frequency for simulated TE variants (default: 0.9)")
+    Simulate_parser.add_argument("--af-dist", type=str, choices=["uniform", "exponential"],
+                    default="uniform",
+                    help="Shape of the per-event allele frequency draw. 'uniform' draws flat "
+                         "between --af-min and --af-max. 'exponential' draws from an exponential "
+                         "of mean --af-mean truncated to [--af-min, --af-max], giving a "
+                         "population dominated by rare, largely private insertions with a thin "
+                         "tail of common ones (default: uniform)")
+    Simulate_parser.add_argument("--af-mean", type=ratio, default=None,
+                    help="Mean of the exponential drawn by --af-dist exponential; required by it "
+                         "and rejected without it. Truncating below at --af-min shifts the "
+                         "distribution, so the realised mean allele frequency is roughly "
+                         "--af-min plus --af-mean -- keep --af-min near 1/--num, or 0, unless "
+                         "you mean to raise the floor")
+    Simulate_parser.add_argument("--allow-zero-carriers", action="store_true",
+                    help="Keep events that no genome drew. By default an event whose genotype "
+                         "roll gives no carrier is given one, a genome chosen uniformly at "
+                         "random, so that every event in the BED reaches at least one genome; "
+                         "without it a low --af-mean quietly discards most of the pool instead "
+                         "of producing private insertions. The realised minimum allele "
+                         "frequency is then 1/--num")
     Simulate_parser.add_argument("--tsd-min", "-M", type=int, default=5, 
                     help="Minimum TSD length (default: 5)")
     Simulate_parser.add_argument("--tsd-max", "-Y", type=int, default=20, 
@@ -337,8 +357,28 @@ def main():
             TEreal_parser.error("--nEXC requires a RepeatMasker .out --existingTEs file (LTR fragment structure is needed to identify full-length elements).")
     if args.command == "TEpan" and args.nEXC > 0:
         TEpan_parser.error("LTR-LTR recombination (--nEXC) is not yet supported for TEpan.")
-    if args.command == "Simulate" and args.diverse_config and not args.diverse:
+    if args.command == "Simulate":
+        if args.diverse_config and not args.diverse:
             parser.error("--diverse_config requires --diverse to be set")
+        # An inverted TSD pair dies inside np.random.randint without naming either flag,
+        # unlike the allele frequency pair, which Simulator checks for itself.
+        if args.tsd_min > args.tsd_max:
+            Simulate_parser.error("--tsd-min must be less than or equal to --tsd-max")
+        if args.tsd_min < 0:
+            Simulate_parser.error("--tsd-min must be non-negative")
+        if args.af_dist == "exponential":
+            if args.af_mean is None or args.af_mean <= 0:
+                Simulate_parser.error("--af-dist exponential requires --af-mean > 0")
+            # Truncating an exponential from below shifts it, so the realised mean cannot
+            # fall below --af-min however small --af-mean is. Asking for one that does is
+            # not an error, but it will not be honoured, so say so.
+            if args.af_mean < args.af_min:
+                print(f"[WARN] --af-mean {args.af_mean} is below --af-min {args.af_min}; the "
+                      f"realised mean allele frequency cannot fall below --af-min. Lower "
+                      f"--af-min (0 removes the floor entirely) to get the mean you asked for.",
+                      file=sys.stderr)
+        elif args.af_mean is not None:
+            Simulate_parser.error("--af-mean only applies to --af-dist exponential")
     if args.command == "Evaluate":
         # Bin edges name the upper bound of each stratum, so out-of-order edges would
         # silently produce strata no event can ever fall into.

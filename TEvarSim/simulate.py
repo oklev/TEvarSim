@@ -65,6 +65,9 @@ class Simulator:
         self.af_max = args.af_max
         self.tsd_min = args.tsd_min
         self.tsd_max = args.tsd_max
+        self.af_dist = args.af_dist
+        self.af_mean = args.af_mean
+        self.allow_zero_carriers = args.allow_zero_carriers
         self.sense_strand_ratio = args.sense_strand_ratio
         self.diverse = args.diverse
         self.diverse_config = args.diverse_config
@@ -73,6 +76,13 @@ class Simulator:
         self.TEevents = []
         if self.random_seed is not None:
             np.random.seed(self.random_seed)
+        # A stream of its own for the draws that only happen sometimes -- the rescued carrier
+        # below, and the per-element TSD lengths read from a header. Taking those from the
+        # global stream would shift every draw after them, so two runs of the same seed that
+        # differed only in whether one event was rescued would differ in the TSD of every
+        # unrelated event downstream. Kept separate, the two runs differ in exactly the thing
+        # that changed, and stay diffable.
+        self._aux = np.random.default_rng(self.random_seed)
     
     def _run(self):
         self._parse_bed()
@@ -173,6 +183,66 @@ class Simulator:
         print(f"[INFO] Parsed {len(self.TEevents)} TE events from BED.",file=sys.stderr)
         print(f"[INFO] Example event: {self.TEevents[0] if self.TEevents else 'No events'}",file=sys.stderr)
     
+    def _draw_afs(self, n):
+        """n allele frequencies from --af-dist, consuming exactly one uniform draw per event.
+
+        "Exactly one" is load-bearing, not incidental. Every later draw in the run reads the
+        same global stream -- the genotype binomials here, and the TSD lengths in get_TE_tag --
+        so a distribution that consumed a different count would shift all of them, and
+        switching --af-dist would silently change the TSD of every event. numpy's
+        uniform(a, b, size=n) is a + (b-a)*random_sample(n) bit for bit, so drawing the
+        uniforms explicitly and transforming them leaves the stream exactly where the uniform
+        branch would have left it.
+
+        The exponential is sampled by inverse CDF for the same reason: rejection sampling
+        consumes an unpredictable number of draws. For rate lam truncated to [a, b],
+
+            F(x) = (1 - exp(-lam*(x-a))) / (1 - exp(-lam*(b-a)))
+
+        inverts to x = a - ln(1 - u*(1 - exp(-lam*(b-a)))) / lam, written below with expm1
+        and log1p so it stays accurate when lam*(b-a) is small.
+
+        Note what truncating from below does: an exponential conditioned on X > a is, by
+        memorylessness, a plus an exponential. So af_mean is the mean ABOVE af_min, and the
+        realised mean allele frequency is about af_min + af_mean, less whatever af_max cuts
+        off the tail.
+        """
+        if n == 0:
+            return np.empty(0, dtype=float)
+        if self.af_dist == "uniform":
+            return np.random.uniform(self.af_min, self.af_max, size=n)
+        u = np.random.random_sample(n)
+        a, b = self.af_min, self.af_max
+        if b <= a:
+            # Degenerate truncation: one allowed value. The uniforms are still drawn, so the
+            # stream stays aligned with what the uniform branch would have consumed.
+            return np.full(n, a, dtype=float)
+        lam = 1.0 / self.af_mean
+        afs = a - np.log1p(u * np.expm1(-lam * (b - a))) / lam
+        # Bounded by [a, b] analytically, but rounding as u approaches 1 can step a few ulp
+        # past b, and np.random.binomial rejects p > 1. That would be a seed-dependent crash
+        # in maybe one run in millions, which is the worst kind to leave in.
+        return np.clip(afs, a, b)
+
+    def _rescue_zero_carriers(self, genotypes):
+        """Give one uniformly chosen genome to each event no genome drew, and count them.
+
+        An event whose binomial roll comes up empty is skipped by generate_vcf and never
+        enters a genome, so the number of events requested and the number simulated diverge
+        with no error. At the low allele frequencies that make insertions private that is most
+        of them: the regime that should produce a population of private insertions instead
+        produces an almost empty one.
+
+        Modifies genotypes in place. A no-op at allele frequency 1, since a row of ones is
+        never empty, so lineage simulations are unaffected.
+        """
+        if self.allow_zero_carriers or self.num_genomes == 0 or genotypes.size == 0:
+            return 0
+        empty = np.flatnonzero(genotypes.sum(axis=1) == 0)
+        for row in empty:
+            genotypes[row, self._aux.integers(self.num_genomes)] = 1
+        return int(empty.size)
+
     def _random_sample_genotypes(self):
         """
         Randomly generate an allele frequency for each TE event, and then generate the genotype for each sample based on that frequency.
@@ -183,21 +253,30 @@ class Simulator:
         "Parameter error: af_min must be less than or equal to af_max.")
 
         nTE_total = 0
+        rescued = 0
         afs_10 = []
 
         # 2. sample genotypes
         for chrom in self.CHR:
             nTE = len(self.CHR[chrom]["events"])
             nTE_total += nTE
-            afs = np.random.uniform(self.af_min, self.af_max, size=nTE)
+            afs = self._draw_afs(nTE)
             self.CHR[chrom]["genotypes"] = np.zeros((nTE, self.num_genomes), dtype=int)
             for i, af in enumerate(afs):
                 self.CHR[chrom]["genotypes"][i] = np.random.binomial(1, af, size=self.num_genomes)
                 if len(afs_10) < 10:
                     afs_10.append(str(round(af,4)))
+            rescued += self._rescue_zero_carriers(self.CHR[chrom]["genotypes"])
 
         print(f"[INFO] Generated genotypes for {nTE_total} events across {self.num_genomes} genomes.",file=sys.stderr)
+        if self.af_dist == "exponential":
+            print(f"[INFO] Allele frequencies drawn from an exponential of mean {self.af_mean}, "
+                  f"truncated to [{self.af_min}, {self.af_max}].",file=sys.stderr)
         print(f"[INFO] Allele frequencies (first 10): {' '.join(afs_10)}",file=sys.stderr)
+        if rescued:
+            print(f"[INFO] {rescued} of {nTE_total} event(s) drew no carrier and were given one "
+                  f"at random (allele frequency 1/{self.num_genomes}); pass "
+                  f"--allow-zero-carriers to drop them instead.",file=sys.stderr)
 
     def get_TE_tag(self):
         """
