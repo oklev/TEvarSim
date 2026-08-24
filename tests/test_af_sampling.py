@@ -67,6 +67,7 @@ def _args(d, bed_rows, **overrides):
               num=8, af_min=0.1, af_max=0.9, tsd_min=5, tsd_max=20,
               sense_strand_ratio=0.5, diverse=False, diverse_config=None, seed=1,
               af_dist="uniform", af_mean=None, allow_zero_carriers=False,
+              del_af_dist=None, del_af_mean=None, del_af_min=None, del_af_max=None,
               tsd_from_header=False)
     kw.update(overrides)
     return _Args(**kw)
@@ -88,8 +89,8 @@ def _genotype_rows(sim):
     return np.vstack([info["genotypes"] for info in sim.CHR.values() if info["events"]])
 
 
-def _run_genotypes(d, n, **overrides):
-    sim = simulate.Simulator(_args(d, _events(n), **overrides))
+def _run_genotypes(d, n, bed_rows=None, **overrides):
+    sim = simulate.Simulator(_args(d, _events(n) if bed_rows is None else bed_rows, **overrides))
     sim._parse_bed()
     sim._check_bed()
     sim._random_sample_genotypes()
@@ -248,6 +249,71 @@ def test_rescue_draws_from_its_own_stream():
         untouched = dropped.sum(axis=1) > 0
         assert untouched.any() and not untouched.all(), "fixture exercises neither branch"
         assert np.array_equal(rescued[untouched], dropped[untouched])
+
+
+# ---------------------------------------------------------------- deletions get their own AF
+
+def test_reflected_exponential_mirrors_the_exponential():
+    """The deletion shape is the insertion shape end for end, so its mean sits at b - mean.
+
+    An ordinary exponential cannot express "most genomes lack this element": asking for a
+    high mean just flattens it towards uniform instead of concentrating mass at the top.
+    """
+    sim = _sampler(af_dist="exponential", af_mean=0.02, af_min=0.0, af_max=1.0)
+    np.random.seed(31)
+    fwd = sim._draw_afs(20000)
+    np.random.seed(31)
+    rev = sim._draw_afs(20000, dist="reflected_exponential")
+    assert np.allclose(rev, 0.0 + 1.0 - fwd)
+    assert abs(fwd.mean() - 0.02) < 0.005, fwd.mean()
+    assert abs(rev.mean() - 0.98) < 0.005, rev.mean()
+    assert rev.min() >= 0.0 and rev.max() <= 1.0
+
+
+def test_deletion_spec_inherits_part_by_part():
+    """An unset --del-af-* falls back to the insertion's, so a partial spec is meaningful."""
+    with tempfile.TemporaryDirectory() as d:
+        sim = simulate.Simulator(_args(d, [], af_dist="exponential", af_mean=0.02,
+                                       af_min=0.05, af_max=0.8,
+                                       del_af_dist="reflected_exponential"))
+        assert sim.del_af_dist == "reflected_exponential"
+        assert sim.del_af_mean == 0.02 and sim.del_af_min == 0.05 and sim.del_af_max == 0.8
+        assert sim._af_by_type
+
+
+def test_no_deletion_spec_leaves_the_draw_untouched():
+    """Byte-identity guard: without a --del-af-* option the single-draw path must be used.
+
+    Splitting the draw always would reorder the RNG for every mixed-type run, changing the
+    output of runs that never asked for this feature.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        sim = simulate.Simulator(_args(d, []))
+        assert not sim._af_by_type
+
+
+def test_deletions_draw_high_and_insertions_low():
+    """The point of the whole feature, end to end on a mixed BED."""
+    # Laid out to fit inside the 2000bp test contig, alternating so the two types are
+    # interleaved in BED order -- which is the order the single-draw path would use, and so
+    # the arrangement most likely to expose a mix-up between the two groups.
+    rows = []
+    for i in range(12):
+        p = 60 + i * 150
+        rows.append(("chrA", p, p, "elem#LTR/Copia", ".", "+"))          # INS
+        rows.append(("chrA", p + 40, p + 100, "-", ".", "+"))            # DEL
+    with tempfile.TemporaryDirectory() as d:
+        sim = _run_genotypes(d, 0, num=50, af_dist="exponential", af_mean=0.02,
+                             af_min=0.01, af_max=0.99,
+                             del_af_dist="reflected_exponential",
+                             del_af_min=0.01, del_af_max=0.99, bed_rows=rows)
+        rows_gt = _genotype_rows(sim)
+        events = [e for info in sim.CHR.values() if info["events"] for e in info["events"]]
+        ins = np.array([rows_gt[i].sum() for i, e in enumerate(events) if e["type"] == "INS"])
+        dels = np.array([rows_gt[i].sum() for i, e in enumerate(events) if e["type"] == "DEL"])
+        assert len(ins) and len(dels), (len(ins), len(dels))
+        assert ins.mean() < 10, f"insertions should be rare, got {ins.mean()}"
+        assert dels.mean() > 40, f"deletions should be near-fixed, got {dels.mean()}"
 
 
 if __name__ == "__main__":

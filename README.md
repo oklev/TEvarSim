@@ -195,10 +195,12 @@ Simulate pTE insertions/deletions and generate VCF and modified genome FASTA.
 - `af-min / --af-max` : Bounds on the allele frequency of a simulated variant. Under the default
   `--af-dist uniform` they are the range it is drawn flat from; under `--af-dist exponential`
   they truncate the exponential (default: 0.1/0.9)
-- `af-dist` : `uniform` or `exponential` (default: `uniform`). An exponential gives a population
+- `af-dist` : `uniform`, `exponential` or `reflected_exponential` (default: `uniform`). An exponential gives a population
   dominated by rare, largely private insertions with a thin tail of common ones, which is roughly
   what a real TE landscape looks like; a flat draw makes most insertions shared
 - `af-mean` : Mean of that exponential. Required by `--af-dist exponential`, rejected without it
+- `del-af-dist / --del-af-mean / --del-af-min / --del-af-max` : Allele frequency spec for
+  DELETIONS only; each part defaults to its `--af-*` counterpart
 - `allow-zero-carriers` : Keep events that no genome drew, instead of giving each one a carrier
 - `tsd-min / --tsd-max` : Min/max TSD length, used for every element that does not state its
   own (default: 5/20)
@@ -241,6 +243,28 @@ below also shifts it, so `--af-mean` is the mean *above* `--af-min` and the real
 frequency is about `--af-min + --af-mean`. Keep `--af-min` near `1/--num`, or at 0, unless you
 mean to raise the floor. `--num` also bounds the resolution: with 20 genomes the smallest
 non-zero frequency is 0.05, so a much smaller `--af-mean` than that just collapses onto it.
+
+**Deletions measure the opposite thing from insertions.** For an insertion `GT=1` means the
+genome *has* the element; for a deletion it means the genome *lacks* the reference's. So a
+deletion's allele frequency is the frequency of an **absence**, and a reference element that
+most genomes lack -- a reference-private insertion, seen from the other side -- is a deletion
+at *high* frequency. Sharing one distribution between the two therefore gets one of them
+backwards, which is what `--del-af-*` exists to fix.
+
+An ordinary exponential cannot express it: asking for a high mean flattens the distribution
+toward uniform rather than concentrating mass at the top. `reflected_exponential` is the same
+exponential mirrored end for end within `[min, max]`, so the mass piles against the top and the
+mean sits at `max` minus the mean. To give the reference its own private insertions:
+
+```
+tevarsim Simulate ... --nDEL 1800 \
+    --af-dist exponential --af-mean 0.01 --af-min 0.01 \
+    --del-af-dist reflected_exponential --del-af-max 1.0
+```
+
+Excisions stay on `--af-dist`: an excision is a derived event that arises and spreads from
+rare, like an insertion, so only `DEL` carries the inverted sense. The split draw is taken only
+when a `--del-af-*` option is actually given, so runs that do not use it are unaffected.
 
 **Every event reaches a genome.** An event whose genotype draw gives no carrier used to be
 dropped from the VCF and from every genome without comment, so at low frequencies most of the

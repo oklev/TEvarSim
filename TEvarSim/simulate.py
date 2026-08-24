@@ -69,6 +69,26 @@ class Simulator:
         self.tsd_from_header = args.tsd_from_header
         self.af_dist = args.af_dist
         self.af_mean = args.af_mean
+        # Deletions get their own allele frequency spec, each part falling back to the
+        # insertion's. They need one because the two event types measure opposite things: for
+        # an insertion GT=1 means the genome HAS the element, but for a deletion it means the
+        # genome LACKS the reference's, so a deletion's allele frequency is the frequency of
+        # an ABSENCE. A reference element that most genomes lack -- a reference-private
+        # insertion, seen from the other side -- is therefore a deletion at HIGH frequency,
+        # which is what --del-af-dist reflected_exponential expresses.
+        #
+        # Excisions are left on the insertion spec. An excision is a derived event that arises
+        # and spreads from rare, exactly like an insertion; only DEL carries the inverted
+        # sense.
+        self.del_af_dist = args.del_af_dist if args.del_af_dist is not None else args.af_dist
+        self.del_af_mean = args.del_af_mean if args.del_af_mean is not None else args.af_mean
+        self.del_af_min = args.del_af_min if args.del_af_min is not None else args.af_min
+        self.del_af_max = args.del_af_max if args.del_af_max is not None else args.af_max
+        # Only split the draw when a deletion spec was actually asked for. Splitting always
+        # would reorder the RNG stream for every mixed-type run, changing the output of runs
+        # that never wanted this feature; gating it keeps those byte-identical.
+        self._af_by_type = any(getattr(args, f"del_af_{k}") is not None
+                               for k in ("dist", "mean", "min", "max"))
         self.allow_zero_carriers = args.allow_zero_carriers
         self.sense_strand_ratio = args.sense_strand_ratio
         self.diverse = args.diverse
@@ -185,7 +205,7 @@ class Simulator:
         print(f"[INFO] Parsed {len(self.TEevents)} TE events from BED.",file=sys.stderr)
         print(f"[INFO] Example event: {self.TEevents[0] if self.TEevents else 'No events'}",file=sys.stderr)
     
-    def _draw_afs(self, n):
+    def _draw_afs(self, n, dist=None, mean=None, lo=None, hi=None):
         """n allele frequencies from --af-dist, consuming exactly one uniform draw per event.
 
         "Exactly one" is load-bearing, not incidental. Every later draw in the run reads the
@@ -209,22 +229,54 @@ class Simulator:
         realised mean allele frequency is about af_min + af_mean, less whatever af_max cuts
         off the tail.
         """
+        dist = self.af_dist if dist is None else dist
+        mean = self.af_mean if mean is None else mean
+        a = self.af_min if lo is None else lo
+        b = self.af_max if hi is None else hi
         if n == 0:
             return np.empty(0, dtype=float)
-        if self.af_dist == "uniform":
-            return np.random.uniform(self.af_min, self.af_max, size=n)
+        if dist == "uniform":
+            return np.random.uniform(a, b, size=n)
         u = np.random.random_sample(n)
-        a, b = self.af_min, self.af_max
         if b <= a:
             # Degenerate truncation: one allowed value. The uniforms are still drawn, so the
             # stream stays aligned with what the uniform branch would have consumed.
             return np.full(n, a, dtype=float)
-        lam = 1.0 / self.af_mean
+        lam = 1.0 / mean
         afs = a - np.log1p(u * np.expm1(-lam * (b - a))) / lam
+        if dist == "reflected_exponential":
+            # The same exponential, mirrored end for end within [a, b], so the mass piles up
+            # against the TOP of the range instead of the bottom and the mean sits at
+            # b - mean rather than a + mean. This is the shape a deletion needs: a reference
+            # element that most genomes lack is one whose ABSENCE is at high frequency, and
+            # the absence frequency is 1 minus an insertion frequency, which is rare. An
+            # ordinary exponential cannot express it -- asking for a high mean just flattens
+            # the distribution rather than concentrating it near the top.
+            afs = a + b - afs
         # Bounded by [a, b] analytically, but rounding as u approaches 1 can step a few ulp
         # past b, and np.random.binomial rejects p > 1. That would be a seed-dependent crash
         # in maybe one run in millions, which is the worst kind to leave in.
         return np.clip(afs, a, b)
+
+    def _draw_afs_by_type(self, events):
+        """One allele frequency per event, deletions drawn from the deletion spec.
+
+        Two draws rather than one, so the deletion group can take a different distribution.
+        That does consume the stream in a different order than the single-draw path -- all
+        non-deletion events, then all deletions -- which is why the caller only takes this
+        path when a --del-af-* option was actually given.
+        """
+        n = len(events)
+        afs = np.empty(n, dtype=float)
+        del_idx = [i for i, e in enumerate(events) if e["type"] == "DEL"]
+        other_idx = [i for i, e in enumerate(events) if e["type"] != "DEL"]
+        if other_idx:
+            afs[other_idx] = self._draw_afs(len(other_idx))
+        if del_idx:
+            afs[del_idx] = self._draw_afs(len(del_idx), dist=self.del_af_dist,
+                                          mean=self.del_af_mean, lo=self.del_af_min,
+                                          hi=self.del_af_max)
+        return afs
 
     def _rescue_zero_carriers(self, genotypes):
         """Give one uniformly chosen genome to each event no genome drew, and count them.
@@ -262,7 +314,10 @@ class Simulator:
         for chrom in self.CHR:
             nTE = len(self.CHR[chrom]["events"])
             nTE_total += nTE
-            afs = self._draw_afs(nTE)
+            if self._af_by_type:
+                afs = self._draw_afs_by_type(self.CHR[chrom]["events"])
+            else:
+                afs = self._draw_afs(nTE)
             self.CHR[chrom]["genotypes"] = np.zeros((nTE, self.num_genomes), dtype=int)
             for i, af in enumerate(afs):
                 self.CHR[chrom]["genotypes"][i] = np.random.binomial(1, af, size=self.num_genomes)
@@ -271,9 +326,14 @@ class Simulator:
             rescued += self._rescue_zero_carriers(self.CHR[chrom]["genotypes"])
 
         print(f"[INFO] Generated genotypes for {nTE_total} events across {self.num_genomes} genomes.",file=sys.stderr)
-        if self.af_dist == "exponential":
-            print(f"[INFO] Allele frequencies drawn from an exponential of mean {self.af_mean}, "
+        if self.af_dist != "uniform":
+            print(f"[INFO] Allele frequencies drawn from {self.af_dist} of mean {self.af_mean}, "
                   f"truncated to [{self.af_min}, {self.af_max}].",file=sys.stderr)
+        if self._af_by_type:
+            print(f"[INFO] Deletions drawn separately from {self.del_af_dist} of mean "
+                  f"{self.del_af_mean}, truncated to [{self.del_af_min}, {self.del_af_max}]; "
+                  f"a deletion's allele frequency is the frequency of the ABSENCE of the "
+                  f"reference's element.",file=sys.stderr)
         print(f"[INFO] Allele frequencies (first 10): {' '.join(afs_10)}",file=sys.stderr)
         if rescued:
             print(f"[INFO] {rescued} of {nTE_total} event(s) drew no carrier and were given one "

@@ -203,7 +203,8 @@ def main():
                     help="Minimum allele frequency for simulated TE variants (default: 0.1)")
     Simulate_parser.add_argument("--af-max", "-X", type=ratio, default=0.9, 
                     help="Maximum allele frequency for simulated TE variants (default: 0.9)")
-    Simulate_parser.add_argument("--af-dist", type=str, choices=["uniform", "exponential"],
+    Simulate_parser.add_argument("--af-dist", type=str,
+                    choices=["uniform", "exponential", "reflected_exponential"],
                     default="uniform",
                     help="Shape of the per-event allele frequency draw. 'uniform' draws flat "
                          "between --af-min and --af-max. 'exponential' draws from an exponential "
@@ -216,6 +217,26 @@ def main():
                          "distribution, so the realised mean allele frequency is roughly "
                          "--af-min plus --af-mean -- keep --af-min near 1/--num, or 0, unless "
                          "you mean to raise the floor")
+    Simulate_parser.add_argument("--del-af-dist", type=str,
+                    choices=["uniform", "exponential", "reflected_exponential"], default=None,
+                    help="Allele frequency distribution for DELETIONS only, defaulting to "
+                         "--af-dist. Deletions need their own because the two event types "
+                         "measure opposite things: for an insertion GT=1 means the genome HAS "
+                         "the element, for a deletion it means the genome LACKS the "
+                         "reference's, so a deletion's allele frequency is the frequency of an "
+                         "ABSENCE. A reference element most genomes lack -- a reference-private "
+                         "insertion seen from the other side -- is a deletion at HIGH "
+                         "frequency, which is what 'reflected_exponential' gives: the same "
+                         "exponential mirrored within [min, max] so the mass piles against the "
+                         "top and the mean sits at max minus --del-af-mean. Excisions stay on "
+                         "--af-dist, being derived events that spread from rare like insertions")
+    Simulate_parser.add_argument("--del-af-mean", type=ratio, default=None,
+                    help="Mean for --del-af-dist, defaulting to --af-mean. For "
+                         "reflected_exponential it is the mean distance BELOW --del-af-max")
+    Simulate_parser.add_argument("--del-af-min", type=ratio, default=None,
+                    help="Lower truncation bound for deletions, defaulting to --af-min")
+    Simulate_parser.add_argument("--del-af-max", type=ratio, default=None,
+                    help="Upper truncation bound for deletions, defaulting to --af-max")
     Simulate_parser.add_argument("--allow-zero-carriers", action="store_true",
                     help="Keep events that no genome drew. By default an event whose genotype "
                          "roll gives no carrier is given one, a genome chosen uniformly at "
@@ -373,9 +394,9 @@ def main():
             Simulate_parser.error("--tsd-min must be less than or equal to --tsd-max")
         if args.tsd_min < 0:
             Simulate_parser.error("--tsd-min must be non-negative")
-        if args.af_dist == "exponential":
+        if args.af_dist in ("exponential", "reflected_exponential"):
             if args.af_mean is None or args.af_mean <= 0:
-                Simulate_parser.error("--af-dist exponential requires --af-mean > 0")
+                Simulate_parser.error(f"--af-dist {args.af_dist} requires --af-mean > 0")
             # Truncating an exponential from below shifts it, so the realised mean cannot
             # fall below --af-min however small --af-mean is. Asking for one that does is
             # not an error, but it will not be honoured, so say so.
@@ -385,7 +406,21 @@ def main():
                       f"--af-min (0 removes the floor entirely) to get the mean you asked for.",
                       file=sys.stderr)
         elif args.af_mean is not None:
-            Simulate_parser.error("--af-mean only applies to --af-dist exponential")
+            Simulate_parser.error("--af-mean only applies to an exponential --af-dist")
+        # The deletion spec inherits part by part, so validate what it RESOLVES to rather
+        # than what was typed: --del-af-dist exponential with no --del-af-mean is legal and
+        # means "the insertion's mean", which only works if there is one.
+        del_dist = args.del_af_dist if args.del_af_dist is not None else args.af_dist
+        del_mean = args.del_af_mean if args.del_af_mean is not None else args.af_mean
+        del_lo = args.del_af_min if args.del_af_min is not None else args.af_min
+        del_hi = args.del_af_max if args.del_af_max is not None else args.af_max
+        if del_dist in ("exponential", "reflected_exponential") and (del_mean is None or del_mean <= 0):
+            Simulate_parser.error(f"--del-af-dist {del_dist} requires --del-af-mean > 0 "
+                                  f"(or an --af-mean to inherit)")
+        if del_lo > del_hi:
+            Simulate_parser.error("--del-af-min must be less than or equal to --del-af-max")
+        if args.del_af_mean is not None and del_dist == "uniform":
+            Simulate_parser.error("--del-af-mean only applies to an exponential --del-af-dist")
     if args.command == "Evaluate":
         # Bin edges name the upper bound of each stratum, so out-of-order edges would
         # silently produce strata no event can ever fall into.
