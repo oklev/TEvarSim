@@ -469,6 +469,32 @@ class Simulator:
     def generate_genome(self):
         """
         Generate the genome sequence for each sample based on the genotype matrix and variant information.
+
+        Memory, measured rather than guessed, because this is the step that holds the most:
+        80,000 events into 100 D. melanogaster genomes (137Mb reference) peaks at 1.45GB and
+        takes 98 seconds. It is nearly flat in population size -- 1.30GB at 5 genomes -- since
+        one contig of one genome is assembled at a time. Peak tracks the reference size plus
+        the total inserted sequence, so it is a genome-size problem, not a sample-size one, and
+        a human-scale reference would be roughly an order of magnitude more.
+
+        That is comfortable at the scales this is used at, so the obvious reductions are left
+        undone. Recorded here because they are not obvious from reading the code, and because
+        a bigger reference would make them worth taking. Measured together at 0.90GB, a 38%
+        saving, with byte-identical output and no change in runtime:
+
+          - Build and write ONE CONTIG at a time. Every contig's chunk list currently coexists,
+            because the first loop below fills them all before the writer runs. Freeing each
+            after it is written is the largest single saving, and the output order is already
+            contig-major so it does not move a byte.
+          - Drop each event's "ref"/"alt" once it is in chunks. generate_vcf has already run by
+            then, and chunks.append(event["alt"][1:]) is a second copy of every element.
+          - Free chr_info["seq"] once its contig is chunked.
+          - indexMat as bool rather than float64 (128MB -> 16MB at 80k events x 100 genomes).
+
+        The last one has a trap. A column slice indexMat[:, idx] is a VIEW, so the
+        mask[flipped] = ~mask[flipped] below would write through and corrupt the matrix for
+        every later genome. This code is safe only because .astype(bool) happens to copy; a
+        bool matrix needs an explicit .copy() there.
         """
         # split genome
         for chrom,chr_info in self.CHR.items():
