@@ -225,8 +225,19 @@ class Simulator:
                     raise ValueError(f"TE sequence {te_seq} not found in {self.pool_fasta}. This could be because the pool file doesn't match the input bed.")
                 if strand == "-":
                     te_seq = str(te_seq.reverse_complement())
-                # tsd_seq = ref_seq[start-tsd_len : start]
-                tsd_seq = self.CHR[chrom]["seq"][start-tsd_len+1 : start+1]
+                # A target site duplication is the stretch of host sequence the integration
+                # machinery cut twice, so the copy carried into the ALT allele is the tsd_len
+                # bases IMMEDIATELY 5' of the insertion point -- the tail of the left flank.
+                # The +1-shifted form this replaces took one base too far: it duplicated only
+                # tsd_len-1 of them and then re-copied seq[start], the first base of the RIGHT
+                # flank, leaving a spurious 1 bp tandem repeat at the junction. The net inserted
+                # length was still tsd_len, so nothing that measured length could see it; it
+                # showed up only as an off-by-one between INFO/TSD and the genome.
+                # max() clamps an insertion closer to the contig start than tsd_len. Without it
+                # the slice start goes negative, which Python reads from the far END of the
+                # contig and so yields an empty string -- a silently absent TSD on a record
+                # whose INFO/TSD claims one.
+                tsd_seq = self.CHR[chrom]["seq"][max(0, start - tsd_len) : start]
                 alt_allele = self.CHR[chrom]["seq"][start - 1] + str(te_seq) + tsd_seq
             elif event["type"] == "EXC":
                 # LTR-LTR recombination: REF is the full LTR-I-LTR element, ALT is the anchor
@@ -286,7 +297,7 @@ class Simulator:
             vcf.write('##INFO=<ID=STRAND,Number=1,Type=String,Description="Insertion strand (+ or -)">\n')
             vcf.write('##INFO=<ID=LTRLEN,Number=1,Type=Integer,Description="Length of the solo LTR left behind by LTR-LTR recombination (EXC only)">\n')
             vcf.write('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Net length change of the variant, negative for excision (EXC only)">\n')
-            vcf.write('##INFO=<ID=TSD,Number=1,Type=Integer,Description="Target site duplication length">\n')
+            vcf.write('##INFO=<ID=TSD,Number=1,Type=Integer,Description="Target site duplication length: for an insertion the ALT allele ends with the TSD bases immediately 5\' of POS. Meaningless for DEL and EXC, which duplicate nothing">\n')
             vcf.write('##INFO=<ID=TEFAMILY,Number=1,Type=String,Description="TE family ID from consensus">\n')
             vcf.write('##INFO=<ID=SNP,Number=1,Type=Integer,Description="Number of SNP modifications in TE sequence">\n')
             vcf.write('##INFO=<ID=INDEL,Number=1,Type=Integer,Description="Number of INDEL modifications in TE sequence">\n')
